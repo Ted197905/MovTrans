@@ -1,0 +1,2 @@
+# sudo visudo -f /etc/sudoers.d/movtrans   (which systemctl nginx 로 경로 확인)
+kaiseian ALL=(root) NOPASSWD: /usr/bin/systemctl restart movtrans-worker, /usr/bin/systemctl status movtrans-worker, /usr/bin/systemctl reload nginx, /usr/bin/systemctl restart php8.5-fpm, /usr/sbin/nginx -t

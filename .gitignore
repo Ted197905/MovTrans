@@ -134,3 +134,5 @@ _modules/*
 /writable/chunks/*
 /pylibs/
 /models/
+/.deploy/
+/secrets/

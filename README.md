@@ -21,7 +21,7 @@ Python 스크립트는 stderr 에 `progress 0..100` 을 출력하고, 그 외 st
 | 구성 | 버전 |
 |---|---|
 | Ubuntu | 26.04 LTS (WSL2) |
-| nginx / PHP-FPM / MySQL | apt stable (PHP 8.4, MySQL 8.4) |
+| nginx / PHP-FPM / MySQL | nginx 1.28, PHP 8.5-FPM, MySQL 8.4 LTS |
 | CodeIgniter | 4.7.x |
 | WhisperX | 최신 (large-v3) |
 | Ollama | 최신, `huihui_ai/qwen3-vl-abliterated:8b-instruct` |
@@ -96,6 +96,12 @@ journalctl -u movtrans-worker -f
 ```
 
 WSL 에서 systemd 가 꺼져 있으면 `/etc/wsl.conf` 에 `[boot] systemd=true` 를 넣고 `wsl --shutdown`.
+
+## 배포 (STUDIO WSL)
+
+MVCut과 동일: Windows `MovTrans/ServerCode` 가 git 트리, `MovTrans/deploy.sh` 와 `MovTrans/.deploy/setup-ssh.sh` 는 트리 밖.
+Cowork device_bash 에서 `bash .deploy/setup-ssh.sh` 후 `./deploy.sh "메시지"`. rsync 는 `pylibs`, `models`, `writable`, `.env` 를 제외한다
+(서버 전용, `--delete` 로 지워지면 안 됨). 서버 경로 `/var/www/movtrans`, 소유자 `kaiseian:www-data`.
 
 ## 개발
 
