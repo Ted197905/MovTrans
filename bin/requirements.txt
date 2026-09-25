@@ -1,0 +1,2 @@
+# pip install --target ./pylibs -r bin/requirements.txt  (torch first, see README)
+whisperx

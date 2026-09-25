@@ -1,0 +1,28 @@
+#--------------------------------------------------------------------
+# MovTrans - copy to .env and edit
+#--------------------------------------------------------------------
+
+CI_ENVIRONMENT = production
+
+app.baseURL = 'http://mt.blackout.kr/'
+app.indexPage = ''
+app.forceGlobalSecureRequests = false
+
+database.default.hostname = localhost
+database.default.database = movtrans
+database.default.username = movtrans
+database.default.password = ''
+database.default.DBDriver = MySQLi
+database.default.DBPrefix =
+database.default.port = 3306
+
+# php spark key:generate fills this
+encryption.key =
+
+# pipeline (defaults in app/Config/MovTrans.php)
+# movtrans.python = /usr/bin/python3
+# movtrans.whisperModel = large-v3
+# movtrans.whisperCompute = float16
+# movtrans.ollamaUrl = http://127.0.0.1:11434
+# movtrans.vlModel = huihui_ai/qwen3-vl-abliterated:8b-instruct
+# movtrans.maxFrames = 300

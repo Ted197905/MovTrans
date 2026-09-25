@@ -1,0 +1,18 @@
+[Unit]
+Description=MovTrans subtitle job worker (WhisperX + Qwen3-VL)
+After=network.target mysql.service ollama.service
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/var/www/movtrans
+ExecStart=/usr/bin/php /var/www/movtrans/spark worker:run
+Restart=always
+RestartSec=3
+UMask=0002
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+Environment=HOME=/var/www/movtrans/writable
+
+[Install]
+WantedBy=multi-user.target
