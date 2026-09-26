@@ -75,6 +75,22 @@ def ollama_unload(url, model):
         r.read()
 
 
+def drop_persistent_text(cues, duration):
+    """On-screen text that keeps coming back over a large part of the video is a title/watermark overlay,
+    not a caption: the vision model reads it in every frame it is asked about."""
+    by = {}
+    for c in cues:
+        by.setdefault(c["text"], []).append(c)
+    out = []
+    for text, cs in by.items():
+        span = max(c["end"] for c in cs) - min(c["start"] for c in cs)
+        if len(cs) >= 6 and span > 0.2 * max(duration, 1):
+            continue
+        out.extend(cs)
+    out.sort(key=lambda c: (c["start"], c["text"]))
+    return out
+
+
 def strip_think(text):
     """Qwen3 may emit <think>...</think>; drop it."""
     while "<think>" in text and "</think>" in text:

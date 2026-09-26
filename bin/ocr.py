@@ -22,7 +22,7 @@ import subprocess
 
 import numpy as np
 
-from subs import extract_json, log, ollama_chat, progress
+from subs import drop_persistent_text, extract_json, log, ollama_chat, progress
 
 PROMPT = (
     "Read every piece of text visible in this video frame, exactly as written (keep the original language). "
@@ -220,7 +220,7 @@ def main():
             prev["end"] = max(prev["end"], x["end"])
         else:
             merged.append(x)
-    out = merged
+    out = drop_persistent_text(merged, n)
     with open(a.out, "w", encoding="utf-8") as f:
         json.dump(out, f, ensure_ascii=False, indent=1)
     log("%d on-screen text cue(s)" % len(out))

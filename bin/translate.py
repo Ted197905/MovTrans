@@ -19,7 +19,7 @@ import os
 import re
 import time
 
-from subs import log, ollama_chat, ollama_unload, progress, strip_think, write_srt, write_vtt
+from subs import drop_persistent_text, log, ollama_chat, ollama_unload, progress, strip_think, write_srt, write_vtt
 
 BATCH = 25
 LOOKAHEAD = 4
@@ -121,6 +121,7 @@ def main():
                 prev["end"] = max(prev["end"], x["end"])
             else:
                 screen.append(dict(x))
+        screen = drop_persistent_text(screen, max((s["end"] for s in segs), default=0))
     # a burned-in subtitle carries the line already: the ASR cue under it is dropped, the subtitle is translated instead
     subs_iv = [(x["start"], x["end"]) for x in screen if x["type"] == "subtitle"]
     if subs_iv:
