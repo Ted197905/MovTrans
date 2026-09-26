@@ -23,6 +23,7 @@ from subs import log, ollama_chat, ollama_unload, progress, strip_think, write_s
 
 BATCH = 25
 LOOKAHEAD = 4
+POLISH_BATCH = 40
 FOREIGN = re.compile(r"[぀-ヿ一-鿿฀-๿Ѐ-ӿ]")  # kana, CJK ideographs, Thai, Cyrillic
 # "12. text", tolerating leaked speaker tags: "12. [F] text", "12. F. text", "12. (M1) text", "12. F: text"
 NUMBERED = re.compile(r"^\s*(\d{1,3})\s*[.):]\s*(?:[\[(]?(?:[FM?]\d?|SUB|TXT)[\])]?\s*[.:\-]?\s*)?(.*?)\s*$")
@@ -60,6 +61,16 @@ BIBLE_PROMPT = (
     "4. 반복되는 고유명사/용어와 그 한국어 표기"
 )
 
+POLISH = (
+    "You are now the reviewing editor (감수). Below are source lines with their draft Korean subtitles. Rewrite each "
+    "draft so it reads like a subtitle a Korean native subtitler would deliver: fix mistranslations against the "
+    "source, keep each speaker's fixed speech level and way of addressing others (style guide), make the wording "
+    "natural spoken Korean for this situation and mood, keep it short (two lines of ~16 characters max). Keep a "
+    "good draft as it is. One subtitle per line, same numbering, Korean only, no tags, no comments.\n\n"
+    "Style guide:\n{bible}\n\nScene notes:\n{scenes}\n\nLines (source => draft):\n{pairs}\n\n"
+    "Answer with exactly {n} lines in the form \"<number>. <final Korean subtitle>\"."
+)
+
 USER = (
     "Style guide:\n{bible}\n\n"
     "Scene notes for this stretch:\n{scenes}\n\n"
@@ -94,6 +105,7 @@ def main():
     ap.add_argument("--rating", choices=sorted(RATING), default="rated")
     ap.add_argument("--num-ctx", type=int, default=16384)
     ap.add_argument("--screen", default="", help="screen.json from ocr.py (burned-in subtitles / captions)")
+    ap.add_argument("--no-polish", action="store_true", help="skip the editor pass")
     a = ap.parse_args()
 
     data = json.load(open(a.segments, encoding="utf-8"))
@@ -180,7 +192,29 @@ def main():
                 cue["pos"] = "top"
             out.append(cue)
         prev = ["%s%s" % (tag(s), t) for s, t in zip(batch, ko)]
-        progress(5 + 95 * hi / len(segs))
+        progress(5 + (50 if not a.no_polish else 95) * hi / len(segs))
+
+    if not a.no_polish:
+        polished = 0
+        for i in range(0, len(out), POLISH_BATCH):
+            chunk = out[i:i + POLISH_BATCH]
+            src = segs[i:i + POLISH_BATCH]
+            notes = [s["desc"] for s in scenes if i <= s["idx"] < i + POLISH_BATCH][:12]
+            pairs = "\n".join("%d. %s%s => %s" % (k + 1, tag(s), s["text"], c["text"]) for k, (s, c) in enumerate(zip(src, chunk)))
+            try:
+                got = parse_numbered(chat(POLISH.format(bible=bible, scenes="\n".join("- " + x for x in notes) or "(none)",
+                                                        pairs=pairs, n=len(chunk))), len(chunk))
+            except Exception as e:
+                log("polish %d failed: %s" % (i // POLISH_BATCH, e))
+                continue
+            for k, (s, c) in enumerate(zip(src, chunk)):
+                t = got.get(k + 1, "")
+                if t and not bad(s["text"], t) and len(t) <= 3 * max(8, len(c["text"])):
+                    if t != c["text"]:
+                        polished += 1
+                    c["text"] = t
+            progress(55 + 44 * (i + len(chunk)) / len(out))
+        log("polish: %d line(s) changed" % polished)
 
     try:
         ollama_unload(a.ollama, a.model)  # free VRAM for the next job's Whisper run
