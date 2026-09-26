@@ -61,7 +61,7 @@ BIBLE_PROMPT = (
     "Write a concise style guide, in Korean, for translating these subtitles as a Korean subtitler would "
     "(no more than 400 characters, plain lines, no markdown):\n"
     "1. 등장인물: 실제로 등장하는 사람들 (이름/호칭이 대사에 나오면 그대로), 성별, 대략 나이, 성격, 역할, 어느 태그로 나오는지\n"
-    "2. 관계와 말투: 각 인물이 상대에게 쓰는 말투(반말/존댓말/높임), 서로를 부르는 호칭. 영상 전체에서 고정\n"
+    "2. 관계와 말투: 각 인물이 상대에게 쓰는 말투(반말/존댓말/높임), 서로를 부르는 호칭. 내레이션/해설이 있으면 그 문체(예: 다큐 해설체 '-습니다'). 영상 전체에서 고정\n"
     "3. 전체 톤과 장르, 번역 시 지킬 점 (표현 수위는 지시대로)\n"
     "4. 반복되는 고유명사/용어와 그 한국어 표기. 일본 인명은 일본어 읽기(예: 神木 -> 카미키, 麗 -> 레이)로 적고 한자 음독(신목)은 쓰지 않는다"
 )
@@ -122,7 +122,10 @@ def main():
             if not x.get("text"):
                 continue
             x = dict(x, text=" ".join(x["text"].split()))  # one line: the numbered protocol cannot carry newlines
-            prev = next((m for m in reversed(screen[-8:]) if m["text"] == x["text"] and x["start"] - m["end"] <= 4.0), None)
+            if len("".join(x["text"].split())) < 2:
+                continue
+            key = "".join(x["text"].split())
+            prev = next((m for m in reversed(screen[-8:]) if "".join(m["text"].split()) == key and x["start"] - m["end"] <= 4.0), None)
             if prev:
                 prev["end"] = max(prev["end"], x["end"])
             else:

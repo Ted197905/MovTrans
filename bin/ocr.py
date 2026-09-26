@@ -36,6 +36,7 @@ PROMPT = (
     "- ui: timers, counters, camera info\n"
     "Return only a JSON array: [{\"text\": \"...\", \"type\": \"subtitle|caption|sign|logo|ui\", "
     "\"ko\": \"natural Korean subtitle translation of the text (for subtitle and caption only, else empty)\"}]. "
+    "Only include text you can read clearly and completely; skip small, blurry, cut-off or partly hidden text. "
     "If there is no text, return []. Do not refuse."
 )
 
@@ -215,7 +216,7 @@ def main():
     out.sort(key=lambda x: (x["start"], x["text"]))
     merged = []
     for x in out:
-        prev = next((m for m in reversed(merged[-8:]) if m["text"] == x["text"] and x["start"] - m["end"] <= 4.0), None)
+        prev = next((m for m in reversed(merged[-8:]) if "".join(m["text"].split()) == "".join(x["text"].split()) and x["start"] - m["end"] <= 4.0), None)
         if prev:
             prev["end"] = max(prev["end"], x["end"])
         else:
