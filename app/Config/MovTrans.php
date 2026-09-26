@@ -13,8 +13,10 @@ class MovTrans extends BaseConfig
     /** Extra sys.path entry (pip install --target ./pylibs). Empty to skip. */
     public string $pylibs = ROOTPATH . 'pylibs';
 
-    /** Hugging Face token for pyannote speaker diarization (empty: per-line pitch only). */
+    /** Hugging Face token for pyannote speaker diarization (gated models; empty: Sortformer or pitch only). */
     public string $hfToken = '';
+    /** auto = pyannote if the token works, else NVIDIA Sortformer (pyenv/nemo), else pitch; both = pyannote + Sortformer cross-check. */
+    public string $diarizer = 'auto';
 
     /** Whisper model and compute type. */
     public string $whisperModel = 'large-v3';

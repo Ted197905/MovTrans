@@ -66,7 +66,7 @@ class Pipeline
             $this->python($jobId, $echo, [
                 ROOTPATH . 'bin/transcribe.py', '--audio', $dir . '/audio.wav', '--lang', $video['lang'],
                 '--model', $this->cfg->whisperModel, '--compute', $this->cfg->whisperCompute, '--out-dir', $dir,
-                '--hf-token', $this->cfg->hfToken,
+                '--hf-token', $this->cfg->hfToken, '--diarizer', $this->cfg->diarizer,
                 '--fill-model', $video['lang'] === 'ja' ? $this->cfg->whisperFillModel : '',
             ]);
             $this->requireFile($dir . '/segments.json');

@@ -162,6 +162,45 @@ def diarize(audio, token, model_name):
         return None
 
 
+def diarize_sortformer(audio_path, python_bin):
+    """[(start, end, label)] from NVIDIA streaming Sortformer, run in its own venv; None when unavailable."""
+    if not python_bin or not os.path.isfile(python_bin):
+        return None
+    import subprocess
+    import tempfile
+    out = os.path.join(tempfile.gettempdir(), "sortformer_%d.json" % os.getpid())
+    try:
+        r = subprocess.run([python_bin, os.path.join(os.path.dirname(os.path.abspath(__file__)), "diarize_sortformer.py"),
+                            "--audio", audio_path, "--out", out], capture_output=True, text=True, timeout=1800)
+        if r.returncode != 0:
+            raise RuntimeError(r.stderr.strip().splitlines()[-1][:300] if r.stderr.strip() else "exit %d" % r.returncode)
+        turns = [(float(s), float(e), str(l)) for s, e, l in json.load(open(out, encoding="utf-8"))]
+        log([ln for ln in r.stderr.splitlines() if ln.startswith("sortformer:")][-1] if "sortformer:" in r.stderr else "sortformer: %d turns" % len(turns))
+        return turns
+    except Exception as e:
+        log("sortformer skipped: %s" % str(e).split("\n")[0][:300])
+        return None
+    finally:
+        try:
+            os.unlink(out)
+        except OSError:
+            pass
+
+
+def agreement(words, turns_a, turns_b):
+    """Fraction of words on which two diarizations agree, after matching B's labels to A's by overlap."""
+    pairs = {}
+    for w in words:
+        la, lb = speaker_at(turns_a, w["start"], w["end"]), speaker_at(turns_b, w["start"], w["end"])
+        if la and lb:
+            pairs.setdefault(lb, {}).setdefault(la, 0)
+            pairs[lb][la] += 1
+    mapping = {lb: max(d, key=d.get) for lb, d in pairs.items()}
+    n = sum(sum(d.values()) for d in pairs.values())
+    hit = sum(d[mapping[lb]] for lb, d in pairs.items())
+    return hit / n if n else 0.0
+
+
 def speaker_at(turns, start, end):
     best, best_ov = None, 0.0
     for s, e, lab in turns:
@@ -404,6 +443,9 @@ def main():
     ap.add_argument("--hf-token", default="")
     ap.add_argument("--fill-model", default="", help="second Whisper model run on spans the first left empty (e.g. kotoba-tech/kotoba-whisper-v2.0-faster)")
     ap.add_argument("--diarize-model", default="pyannote/speaker-diarization-3.1")
+    ap.add_argument("--diarizer", default="auto", choices=["auto", "pyannote", "sortformer", "both", "pitch"],
+                    help="auto = pyannote if the token works, else Sortformer, else pitch; both = pyannote + Sortformer cross-check")
+    ap.add_argument("--nemo-python", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "pyenv", "nemo", "bin", "python"))
     a = ap.parse_args()
 
     import torch
@@ -494,7 +536,18 @@ def main():
     progress(62)
 
     cast = {}
-    turns = diarize(audio, a.hf_token, a.diarize_model)
+    turns = None
+    if a.diarizer in ("auto", "pyannote", "both"):
+        turns = diarize(audio, a.hf_token, a.diarize_model)
+        if turns:
+            log("diarization: pyannote, %d turns, %d speakers" % (len(turns), len({t[2] for t in turns})))
+    if a.diarizer == "both" or (a.diarizer in ("auto", "sortformer") and not turns):
+        turns2 = diarize_sortformer(a.audio, a.nemo_python)
+        if turns2 and turns:
+            log("diarization cross-check: pyannote vs Sortformer agree on %.0f%% of words" % (100 * agreement(words, turns, turns2)))
+        elif turns2:
+            turns = turns2
+            log("diarization: Sortformer, %d turns, %d speakers" % (len(turns), len({t[2] for t in turns})))
     progress(78)
     if turns:
         # name diarized speakers by voice pitch: F1, M1, F2, ...
