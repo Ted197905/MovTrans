@@ -565,7 +565,12 @@ def main():
                                 "voice": "unclear" if f0 is None else "male-sounding" if f0 < 150 else "female-sounding" if f0 > 200 else "ambiguous"}
         for w in words:
             w["spk"] = names.get(w["spk"], "")
-        smooth_speakers(words, a.lang)
+        # diarization is trusted as it is (smoothing is for pitch-vote noise); only unlabeled words take a neighbour
+        last = ""
+        for w in words:
+            if not w["spk"] and last:
+                w["spk"] = last
+            last = w["spk"] or last
         log("speakers: " + ", ".join("%s=%s" % (lab, names[lab]) for lab in names))
         cues = build_cues(words, a.lang)
     else:
