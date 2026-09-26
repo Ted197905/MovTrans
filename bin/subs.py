@@ -1,6 +1,7 @@
 """Shared helpers for the bin/*.py workers: progress protocol, SRT/VTT writers, Ollama client."""
 import json
 import sys
+import urllib.error
 import urllib.request
 
 
@@ -35,19 +36,32 @@ def write_vtt(path, segs):
             f.write("%s --> %s\n%s\n\n" % (_ts(s["start"], "."), _ts(s["end"], "."), s["text"].strip()))
 
 
-def ollama_chat(url, model, messages, images=None, keep_alive="10m", timeout=600, num_ctx=None):
-    """One /api/chat round trip. images: list of base64 strings attached to the last user message."""
+_NO_THINK = {}  # model -> False when the model rejects the "think" option
+
+
+def ollama_chat(url, model, messages, images=None, keep_alive="10m", timeout=1800, num_ctx=None, think=False, temperature=0.2):
+    """One /api/chat round trip. images: list of base64 strings attached to the last user message.
+    think=False switches reasoning off for thinking models (Qwen3.5/3.6); instruct models ignore or reject it."""
     msgs = [dict(m) for m in messages]
     if images:
         msgs[-1]["images"] = images
     body = {"model": model, "messages": msgs, "stream": False, "keep_alive": keep_alive,
-            "options": {"temperature": 0.2}}
+            "options": {"temperature": temperature}}
     if num_ctx:
         body["options"]["num_ctx"] = num_ctx
+    if _NO_THINK.get(model, True) and think is not None:
+        body["think"] = think
     req = urllib.request.Request(url.rstrip("/") + "/api/chat", data=json.dumps(body).encode("utf-8"),
                                  headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        data = json.loads(r.read().decode("utf-8"))
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            data = json.loads(r.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        msg = e.read().decode("utf-8", "replace")
+        if e.code == 400 and "think" in msg and "think" in body:
+            _NO_THINK[model] = False
+            return ollama_chat(url, model, messages, images, keep_alive, timeout, num_ctx, None, temperature)
+        raise urllib.error.HTTPError(e.url, e.code, msg[:300], e.headers, None)
     return data["message"]["content"]
 
 
