@@ -30,7 +30,15 @@ window.MT = (() => {
     });
   }
 
+  // keep the last chosen option per browser; storage may be unavailable (private mode)
+  function remember(sel, key) {
+    try { const v = localStorage.getItem(key); if (v && [...sel.options].some(o => o.value === v)) sel.value = v; } catch (e) {}
+    sel.addEventListener('change', () => { try { localStorage.setItem(key, sel.value); } catch (e) {} });
+  }
+
   function uploader(drop, input, list, langSel, ratingSel) {
+    remember(langSel, 'mt.lang');
+    remember(ratingSel, 'mt.rating');
     const row = (name) => {
       const el = document.createElement('div');
       el.className = 'up';

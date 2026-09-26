@@ -96,6 +96,6 @@ class Videos extends BaseController
     public const LANGS = [
         'en' => 'English', 'ja' => '日本語', 'zh' => '中文', 'es' => 'Español', 'fr' => 'Français',
         'de' => 'Deutsch', 'ru' => 'Русский', 'pt' => 'Português', 'it' => 'Italiano', 'th' => 'ไทย',
-        'vi' => 'Tiếng Việt', 'id' => 'Bahasa Indonesia', 'ko' => '한국어',
+        'vi' => 'Tiếng Việt', 'id' => 'Bahasa Indonesia', 'hi' => 'हिन्दी', 'ko' => '한국어',
     ];
 }
