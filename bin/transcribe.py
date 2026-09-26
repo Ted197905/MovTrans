@@ -362,7 +362,9 @@ def build_cues(words, lang, max_dur=6.0, max_gap=0.7):
             # a segment's first token often carries a placeholder timestamp: never leave a 1-2 char cue behind
             tiny = len(ctext) < (3 if cjk else 2)
             too_long = dur > max_dur or len(ctext) + len(txt) > max_chars
-            if (w["spk"] != cur[0]["spk"] and not tiny) or (gap > max_gap and not tiny) or (ends_sentence and dur > 1.5):
+            # a pitch-vote speaker flip in the middle of a phrase (no pause, no break character) is noise, not a new speaker
+            spk_change = w["spk"] != cur[0]["spk"] and not tiny and (not cjk or gap > 0.3 or BREAK_JA.search(ctext))
+            if spk_change or (gap > max_gap and not tiny) or (ends_sentence and dur > 1.5):
                 flush(cur); cur = []
             elif too_long:
                 cut = len(cur)  # default: cut here
