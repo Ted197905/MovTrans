@@ -30,26 +30,18 @@
   <?php if (! $videos): ?>
     <p class="muted">아직 업로드한 영상이 없습니다.</p>
   <?php else: ?>
-  <table class="list">
+  <table class="list" id="list">
     <thead><tr><th>제목</th><th>원어</th><th>수위</th><th>길이</th><th>상태</th><th></th></tr></thead>
     <tbody>
     <?php foreach ($videos as $v): $j = $v['job']; ?>
-      <tr>
+      <tr data-id="<?= $v['id'] ?>">
         <td><a href="<?= site_url('videos/' . $v['id']) ?>"><?= esc($v['title']) ?></a></td>
         <td><?= esc($v['lang']) ?></td>
         <td><?= esc(strtoupper($v['rating'] ?? 'rated')) ?></td>
         <td><?= $v['duration'] ? gmdate((float) $v['duration'] >= 3600 ? 'G:i:s' : 'i:s', (int) $v['duration']) : '-' ?></td>
-        <td><span class="status <?= esc($v['status']) ?>"><?php
-          switch ($v['status']) {
-              case 'uploaded':   echo '업로드 완료'; break;
-              case 'queued':     echo '대기' . ($v['queuePos'] ? ' ' . $v['queuePos'] . '번째' : ''); break;
-              case 'processing': echo '진행 중' . ($j && $j['status'] === 'running' ? ' / ' . esc($j['stage']) . ' ' . (int) $j['progress'] . '%' : ''); break;
-              case 'done':       echo '완료'; break;
-              case 'failed':     echo '실패'; break;
-              default:           echo esc($v['status']);
-          } ?></span></td>
+        <td><span class="status <?= esc($v['state']) ?>" data-state="<?= esc($v['state']) ?>"><?= esc($v['label']) ?></span></td>
         <td class="actions">
-          <?php if (in_array($v['status'], ['uploaded', 'failed'], true)): ?>
+          <?php if (in_array($v['state'], ['uploaded', 'failed'], true)): ?>
           <form method="post" action="<?= site_url('videos/' . $v['id'] . '/start') ?>"><?= csrf_field() ?><button class="linkbtn" type="submit">진행</button></form>
           <?php endif ?>
           <form method="post" action="<?= site_url('videos/' . $v['id'] . '/delete') ?>" onsubmit="return confirm('삭제할까요?')"><?= csrf_field() ?><button class="linkbtn danger" type="submit">삭제</button></form>
@@ -63,5 +55,6 @@
 <?= $this->endSection() ?>
 
 <?= $this->section('scripts') ?>
-<script>MT.uploader(document.getElementById('drop'), document.getElementById('file'), document.getElementById('uploads'), document.getElementById('lang'), document.getElementById('rating'));</script>
+<script>MT.uploader(document.getElementById('drop'), document.getElementById('file'), document.getElementById('uploads'), document.getElementById('lang'), document.getElementById('rating'));
+MT.list(document.getElementById('list'));</script>
 <?= $this->endSection() ?>

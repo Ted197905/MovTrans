@@ -31,6 +31,8 @@ window.MT = (() => {
   }
 
   // keep the last chosen option per browser; storage may be unavailable (private mode)
+  let uploading = 0;
+
   function remember(sel, key) {
     try { const v = localStorage.getItem(key); if (v && [...sel.options].some(o => o.value === v)) sel.value = v; } catch (e) {}
     sel.addEventListener('change', () => { try { localStorage.setItem(key, sel.value); } catch (e) {} });
@@ -53,6 +55,7 @@ window.MT = (() => {
     };
     async function upload(file) {
       const r = row(file.name + ' (' + fmtSize(file.size) + ')');
+      uploading++;
       let uploadId = null;
       try {
         const init = await post(base + 'api/upload/init', { name: file.name, size: file.size, lang: langSel.value, rating: ratingSel.value });
@@ -81,10 +84,12 @@ window.MT = (() => {
         r.set(100, '등록 중...');
         const fin = await post(base + 'api/upload/finish', { uploadId, total });
         r.done('업로드 완료', fin.url);
-        setTimeout(() => location.reload(), 1500);
+        if (uploading === 1) setTimeout(() => location.reload(), 1500);
       } catch (e) {
         r.fail(e.message);
         if (uploadId) post(base + 'api/upload/abort', { uploadId }).catch(() => {});
+      } finally {
+        uploading--;
       }
     }
     const handle = files => { for (const f of files) upload(f); };
@@ -92,6 +97,28 @@ window.MT = (() => {
     ['dragenter', 'dragover'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('over'); }));
     ['dragleave', 'drop'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove('over'); }));
     drop.addEventListener('drop', e => handle(e.dataTransfer.files));
+  }
+
+  /* list page: refresh status labels while any job is waiting/running; reload when one finishes (not mid-upload) */
+  function list(table) {
+    if (!table) return;
+    const active = s => s === 'queued' || s === 'processing';
+    const tick = async () => {
+      try {
+        const res = await fetch(base + 'api/videos/status', { headers: { 'X-Requested-With': 'XMLHttpRequest' } });
+        if (!res.ok) throw new Error(httpError(res.status));
+        let finished = false;
+        for (const v of await res.json()) {
+          const el = table.querySelector('tr[data-id="' + v.id + '"] .status');
+          if (!el) continue;
+          if (active(el.dataset.state) && !active(v.status)) finished = true;
+          el.className = 'status ' + v.status; el.dataset.state = v.status; el.textContent = v.label;
+        }
+        if (finished && !uploading) { location.reload(); return; }
+      } catch (e) { /* transient; keep polling */ }
+      if ([...table.querySelectorAll('.status')].some(el => active(el.dataset.state))) setTimeout(tick, 3000);
+    };
+    if ([...table.querySelectorAll('.status')].some(el => active(el.dataset.state))) setTimeout(tick, 3000);
   }
 
   /* progress page: poll /api/jobs/{video} until done or failed */
@@ -142,5 +169,5 @@ window.MT = (() => {
     video.addEventListener('loadedmetadata', apply);
   }
 
-  return { uploader, progress, player };
+  return { uploader, list, progress, player };
 })();

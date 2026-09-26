@@ -11,16 +11,40 @@ class Videos extends BaseController
 {
     public function index()
     {
-        $videos = new VideoModel();
+        return view('videos/index', ['title' => '영상', 'videos' => self::rows(), 'langs' => self::LANGS, 'ratings' => self::RATINGS]);
+    }
+
+    /** GET /api/videos/status -> [{id, status, label}] (polled by the list while jobs are pending) */
+    public function status()
+    {
+        return $this->response->setJSON(array_map(
+            static fn (array $v) => ['id' => (int) $v['id'], 'status' => $v['state'], 'label' => $v['label']],
+            self::rows()
+        ));
+    }
+
+    /** Videos with display state. The job row decides running vs waiting (video.status can lag the worker claim). */
+    private static function rows(): array
+    {
         $jobs   = new JobModel();
-        $rows   = $videos->orderBy('id', 'DESC')->findAll();
+        $rows   = (new VideoModel())->orderBy('id', 'DESC')->findAll();
         $queued = array_column($jobs->select('id')->where('status', 'queued')->orderBy('id', 'ASC')->findAll(), 'id');
         foreach ($rows as &$r) {
-            $r['job'] = $jobs->latestFor((int) $r['id']);
-            $pos = $r['job'] && $r['job']['status'] === 'queued' ? array_search($r['job']['id'], $queued) : false;
-            $r['queuePos'] = $pos === false ? null : $pos + 1;
+            $j = $r['job'] = $jobs->latestFor((int) $r['id']);
+            $state = $r['status'];
+            if ($j && $j['status'] === 'running') $state = 'processing';
+            elseif ($j && $j['status'] === 'queued') $state = 'queued';
+            $r['state'] = $state;
+            $r['label'] = match ($state) {
+                'uploaded'   => '업로드 완료',
+                'queued'     => '대기 ' . (array_search($j['id'] ?? 0, $queued) + 1) . '번째',
+                'processing' => '진행 중' . ($j && $j['status'] === 'running' ? ' / ' . $j['stage'] . ' ' . (int) $j['progress'] . '%' : ''),
+                'done'       => '완료',
+                'failed'     => '실패',
+                default      => $state,
+            };
         }
-        return view('videos/index', ['title' => '영상', 'videos' => $rows, 'langs' => self::LANGS, 'ratings' => self::RATINGS]);
+        return $rows;
     }
 
     public function show(int $id)
