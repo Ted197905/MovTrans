@@ -20,6 +20,7 @@ class WorkerRun extends BaseCommand
         $pipe  = new Pipeline();
         $log   = static fn (string $m) => CLI::write('[' . date('H:i:s') . '] ' . $m);
         $log('worker started (pid ' . getmypid() . ')');
+        if ($n = $pipe->requeueStale()) $log("requeued {$n} interrupted job(s)");
         while (true) {
             $job = $pipe->claim();
             if ($job) {

@@ -37,6 +37,14 @@ class Pipeline
         return $this->jobs->find($id);
     }
 
+    /** Single worker: any 'running' row at startup was cut off by a restart (deploy), so queue it again. */
+    public function requeueStale(): int
+    {
+        $db = $this->jobs->db;
+        $db->query("UPDATE jobs SET status = 'queued', stage = 'queued', progress = 0, updated_at = NOW() WHERE status = 'running'");
+        return $db->affectedRows();
+    }
+
     public function run(array $job, ?callable $echo = null): void
     {
         $echo ??= static function (string $m): void {};
