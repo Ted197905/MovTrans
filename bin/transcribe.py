@@ -184,11 +184,20 @@ def clips_for(audio, max_len=30.0, pad=0.3):
     return out
 
 
-def keep_segment(s):
+# Real phrases Whisper also likes to invent on non-speech; dropped only when the window itself looks non-speech.
+SUSPICIOUS = {"ありがとうございました", "ありがとうございます", "おやすみ", "おや", "すみ", "良い一日を", "はい", "thank you", "thanks", "bye"}
+
+
+def keep_segment(s, min_word_prob=0.0):
     text = (s.text or "").strip()
     if not text or not s.words:
         return False
-    return not ((s.no_speech_prob > 0.6 and s.avg_logprob < -1.0) or s.compression_ratio > 2.4 or is_hallucination(text))
+    if (s.no_speech_prob > 0.6 and s.avg_logprob < -1.0) or s.compression_ratio > 2.4 or is_hallucination(text):
+        return False
+    core = re.sub(r"[\s。、．，,.!！?？…]", "", text).lower()
+    if core in SUSPICIOUS and s.no_speech_prob > 0.4:
+        return False
+    return sum(w.probability for w in s.words) / len(s.words) >= min_word_prob
 
 
 def smooth_speakers(words, lang):
@@ -291,7 +300,7 @@ def main():
     log("%d clips" % len(clips))
     progress(8)
 
-    def transcribe(clip_list, temps, base, span):
+    def transcribe(clip_list, temps, base, span, min_word_prob=0.0):
         seg_iter, _ = model.transcribe(
             audio, language=a.lang, beam_size=5, word_timestamps=True, temperature=temps,
             condition_on_previous_text=False, vad_filter=False, clip_timestamps=[x for c in clip_list for x in c],
@@ -300,7 +309,7 @@ def main():
         for s in seg_iter:
             n += 1
             progress(base + span * min(1.0, s.end / total))
-            if keep_segment(s):
+            if keep_segment(s, min_word_prob):
                 kept.append(s)
             else:
                 rejected.append((float(s.start), float(s.end)))
@@ -319,9 +328,11 @@ def main():
     if retry:
         log("retrying %d rejected span(s)" % len(retry))
         covered = [(float(s.start), float(s.end)) for s in kept]
-        kept2, _, _ = transcribe(retry, [0.2, 0.5], 54, 6)
+        kept2, _, _ = transcribe(retry, [0.0, 0.3], 54, 6, min_word_prob=0.5)
         for s in kept2:
             if not any(min(e, s.end) - max(b, s.start) > 0.3 for b, e in covered):
+                log("retry-keep %.1f-%.1f (nsp %.2f lp %.2f cr %.2f wp %.2f): %s" % (s.start, s.end, s.no_speech_prob, s.avg_logprob,
+                    s.compression_ratio, sum(w.probability for w in s.words) / len(s.words), (s.text or "").strip()[:40]))
                 kept.append(s)
         kept.sort(key=lambda s: s.start)
     words, spans = [], []
