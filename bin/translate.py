@@ -12,6 +12,7 @@ import argparse
 import json
 import os
 import re
+import time
 
 from subs import extract_json, log, ollama_chat, ollama_unload, progress, strip_think, write_srt, write_vtt
 
@@ -80,7 +81,9 @@ def main():
         user = USER.format(summary=summary, cast=cast, scenes="\n".join("- " + x for x in notes) or "(none)",
                            prev="\n".join(prev[-6:]) or "(none)", n=len(batch), lang=a.lang, lines=lines)
         ko = None
-        for attempt in range(2):
+        for attempt in range(3):
+            if attempt:
+                time.sleep(5)  # an Ollama 500 usually means the runner crashed and is reloading
             try:
                 reply = ollama_chat(a.ollama, a.model,
                                     [{"role": "system", "content": system}, {"role": "user", "content": user}],

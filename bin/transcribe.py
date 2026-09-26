@@ -4,7 +4,7 @@ Transcription with word timestamps, hallucination filtering, speaker labels and 
 
   transcribe.py --audio audio.wav --lang ja --model large-v3 --compute float16 --out-dir DIR [--hf-token TOKEN]
 
-Pipeline: faster-whisper (word timestamps, silero VAD) -> drop hallucinated / non-speech segments
+Pipeline: faster-whisper (word timestamps, no VAD: silero merges moaning/music into huge chunks and dialogue is lost) -> drop hallucinated / non-speech segments
 -> speaker labels (pyannote diarization when --hf-token is given, else per-cue pitch -> F/M)
 -> regroup words into cues (max 6 s / ~28 CJK chars, split at pauses and speaker changes).
 
@@ -35,9 +35,13 @@ HALLUCINATIONS = [
 ]
 
 
+MOAN_JA = re.compile(r"[あぁいぃうぅえぇおぉんっーはひふへほ〜～]+")
+MOAN_LATIN = re.compile(r"(?:[aeiou]+h*|h[aeiou]+|m+|hm+|uh+|ah+|oh+|mm+|mhm)")
+
+
 def is_hallucination(text):
     t = re.sub(r"[\s。、．，,.!！?？…・「」\"'()（）\-]", "", text).lower()
-    if not t:
+    if not t or MOAN_JA.fullmatch(t) or MOAN_LATIN.fullmatch(t):  # moans / interjections are not dialogue
         return True
     if re.fullmatch(r"(.)\1{2,}", t) or re.fullmatch(r"(..)\1{2,}", t):  # ああああ / はぁはぁはぁ
         return True
@@ -50,30 +54,78 @@ def is_hallucination(text):
     return False
 
 
+def yin_f0(x, fmin=70, fmax=400, thr=0.15):
+    """YIN (difference function + cumulative mean normalisation) per 40 ms frame, 20 ms hop.
+    Returns (times, f0) of the voiced frames; times are seconds from the start of x."""
+    n = int(0.04 * SR); tmax = SR // fmin; tmin = SR // fmax; hop = int(0.02 * SR); L = n + tmax
+    empty = (np.array([]), np.array([]))
+    if len(x) < L:
+        return empty
+    starts = np.arange(0, len(x) - L + 1, hop)
+    frames = np.stack([x[s:s + L] for s in starts]).astype(np.float64)
+    loud = np.sqrt((frames[:, :n] ** 2).mean(1)) > 0.01
+    frames, starts = frames[loud], starts[loud]
+    if not len(frames):
+        return empty
+    nfft = 1 << (2 * L - 1).bit_length()
+    A = np.fft.rfft(frames[:, :n], nfft, axis=1); B = np.fft.rfft(frames, nfft, axis=1)
+    corr = np.fft.irfft(np.conj(A) * B, nfft, axis=1)[:, : tmax + 1]          # sum_j x[j] x[j+tau]
+    cs = np.concatenate([np.zeros((len(frames), 1)), np.cumsum(frames ** 2, axis=1)], axis=1)
+    taus = np.arange(tmax + 1)
+    e_tau = cs[:, taus + n] - cs[:, taus]
+    d = cs[:, n:n + 1] + e_tau - 2 * corr
+    cmnd = np.ones_like(d)
+    cmnd[:, 1:] = d[:, 1:] * taus[1:] / np.maximum(np.cumsum(d[:, 1:], axis=1), 1e-9)
+    times, f0s = [], []
+    for st, row in zip(starts, cmnd):
+        r = row[tmin:tmax + 1]
+        if r.min() < thr:  # deepest dip, not the first one below threshold (avoids octave-up errors)
+            times.append((st + n / 2) / SR); f0s.append(SR / (tmin + int(np.argmin(r))))
+    return np.array(times), np.array(f0s)
+
+
 def pitch_hz(audio, start, end):
     """Median F0 (Hz) of a stretch of audio, or None when too short / unvoiced."""
     a = int(max(0, start) * SR); b = int(min(len(audio) / SR, end) * SR)
     if b - a < SR // 4:
         return None
-    import torch
-    import torchaudio.functional as F
-    w = torch.from_numpy(audio[a:b]).unsqueeze(0)
-    try:
-        f0 = F.detect_pitch_frequency(w, SR, frame_time=0.02, win_length=20, freq_low=70, freq_high=400)[0].numpy()
-    except Exception:
-        return None
-    # detect_pitch_frequency has no voicing decision; keep frames with usable energy only
-    frames = np.array_split(audio[a:b], max(1, len(f0)))
-    rms = np.array([float(np.sqrt(np.mean(x * x))) if len(x) else 0.0 for x in frames])[: len(f0)]
-    f0 = f0[: len(rms)]
-    keep = (rms > 0.01) & (f0 > 70) & (f0 < 400)
-    if keep.sum() < 5:
-        return None
-    return float(np.median(f0[keep]))
+    _, f0 = yin_f0(audio[a:b])
+    return float(np.median(f0)) if len(f0) >= 5 else None
 
 
 def gender(f0):
     return "?" if f0 is None else ("F" if f0 >= 165 else "M")
+
+
+def label_words_by_pitch(audio, words, spans):
+    """No diarization: F/M per word from voiced frames (F >= 180 Hz, M <= 150 Hz, in between ignored);
+    words without a clear vote inherit their neighbour's label."""
+    frames = []  # (time, class)
+    for s, e in spans:
+        a = int(max(0, s - 0.2) * SR); b = int(min(len(audio) / SR, e + 0.2) * SR)
+        t, f0 = yin_f0(audio[a:b])
+        for ti, fi in zip(t, f0):
+            if fi >= 180 or fi <= 150:
+                frames.append((a / SR + ti, "F" if fi >= 180 else "M"))
+    frames.sort()
+    ft = np.array([f[0] for f in frames]); fc = np.array([f[1] for f in frames])
+    for w in words:
+        lo = np.searchsorted(ft, w["start"] - 0.05); hi = np.searchsorted(ft, w["end"] + 0.05)
+        votes = fc[lo:hi]
+        if len(votes) >= 2:
+            f = int((votes == "F").sum()); m = len(votes) - f
+            w["spk"] = "F" if f > m else ("M" if m > f else "?")
+        else:
+            w["spk"] = "?"
+    last, last_end = "?", 0.0
+    for w in words:  # fill gaps from the previous word (short function words carry no voiced frames)
+        if w["spk"] == "?" and last != "?" and w["start"] - last_end < 1.5:
+            w["spk"] = last
+        if w["spk"] != "?":
+            last, last_end = w["spk"], w["end"]
+    for i in range(len(words) - 2, -1, -1):  # then from the next word
+        if words[i]["spk"] == "?" and words[i + 1]["spk"] != "?" and words[i + 1]["start"] - words[i]["end"] < 1.5:
+            words[i]["spk"] = words[i + 1]["spk"]
 
 
 def diarize(audio, token, model_name):
@@ -111,6 +163,32 @@ def speaker_at(turns, start, end):
     return best
 
 
+def smooth_speakers(words, lang):
+    """Pitch votes flip on single tokens; an isolated short run A-B-A becomes A-A-A (real turns persist)."""
+    min_chars = 5 if lang in NO_SPACE_LANGS else 2
+    while True:
+        runs = []  # [label, first index, last index]
+        for i, w in enumerate(words):
+            if runs and runs[-1][0] == w["spk"]:
+                runs[-1][2] = i
+            else:
+                runs.append([w["spk"], i, i])
+        changed = False
+        for k in range(1, len(runs) - 1):
+            lab, a, b = runs[k]
+            if runs[k - 1][0] != runs[k + 1][0] or runs[k - 1][0] == lab:
+                continue
+            dur = words[b]["end"] - words[a]["start"]
+            chars = sum(len(w["word"].strip()) for w in words[a:b + 1])
+            if dur < 1.0 or chars < min_chars:
+                for w in words[a:b + 1]:
+                    w["spk"] = runs[k - 1][0]
+                changed = True
+                break
+        if not changed:
+            return
+
+
 def build_cues(words, lang, max_dur=6.0, max_gap=0.7):
     max_chars = 28 if lang in NO_SPACE_LANGS else 64
     joiner = "" if lang in NO_SPACE_LANGS else " "
@@ -129,8 +207,10 @@ def build_cues(words, lang, max_dur=6.0, max_gap=0.7):
             gap = w["start"] - cur["end"]
             dur = w["end"] - cur["start"]
             ends_sentence = bool(re.search(r"[。！？!?]\s*$", cur["text"]))
-            if (w["spk"] != cur["spk"] or gap > max_gap or dur > max_dur or len(cur["text"]) + len(txt) > max_chars
-                    or (ends_sentence and dur > 1.5)):
+            # a segment's first token often carries a placeholder timestamp: never leave a 1-2 char cue behind
+            tiny = len(cur["text"].strip()) < (3 if lang in NO_SPACE_LANGS else 2)
+            if ((w["spk"] != cur["spk"] and not tiny) or (gap > max_gap and not tiny) or dur > max_dur
+                    or len(cur["text"]) + len(txt) > max_chars or (ends_sentence and dur > 1.5)):
                 flush()
         if cur is None:
             cur = {"start": w["start"], "end": w["end"], "text": txt.strip(), "spk": w["spk"]}
@@ -170,21 +250,21 @@ def main():
     model = WhisperModel(a.model, device=device, compute_type=compute)
     progress(8)
     seg_iter, info = model.transcribe(
-        audio, language=a.lang, beam_size=5, word_timestamps=True,
-        condition_on_previous_text=False, hallucination_silence_threshold=2.0,
-        vad_filter=True, vad_parameters=dict(threshold=0.35, min_silence_duration_ms=700, speech_pad_ms=300),
+        audio, language=a.lang, beam_size=5, word_timestamps=True, temperature=[0.0, 0.3, 0.6],
+        condition_on_previous_text=False, hallucination_silence_threshold=2.0, vad_filter=False,
     )
-    words, dropped, raw = [], 0, 0
+    words, spans, dropped, raw = [], [], 0, 0
     for s in seg_iter:
         raw += 1
         progress(8 + 52 * min(1.0, s.end / total))
         text = (s.text or "").strip()
         if not text or not s.words:
             continue
-        if (s.no_speech_prob > 0.5 and s.avg_logprob < -0.7) or s.compression_ratio > 2.4 or is_hallucination(text):
+        if (s.no_speech_prob > 0.6 and s.avg_logprob < -1.0) or s.compression_ratio > 2.4 or is_hallucination(text):
             dropped += 1
             log("drop %.1f-%.1f (nsp %.2f lp %.2f cr %.2f): %s" % (s.start, s.end, s.no_speech_prob, s.avg_logprob, s.compression_ratio, text[:40]))
             continue
+        spans.append((float(s.start), float(s.end)))
         for w in s.words:
             if w.word.strip():
                 words.append({"start": float(w.start), "end": float(w.end), "word": w.word, "spk": ""})
@@ -212,13 +292,13 @@ def main():
             cast[names[lab]] = {"lines": 0, "f0": round(f0) if f0 else None}
         for w in words:
             w["spk"] = names.get(w["spk"], "")
+        smooth_speakers(words, a.lang)
         log("speakers: " + ", ".join("%s=%s" % (lab, names[lab]) for lab in names))
         cues = build_cues(words, a.lang)
     else:
+        label_words_by_pitch(audio, words, spans)
+        smooth_speakers(words, a.lang)
         cues = build_cues(words, a.lang)
-        for c in cues:  # no diarization: label each cue by its own pitch
-            c["spk"] = gender(pitch_hz(audio, c["start"], c["end"]))
-            cast.setdefault(c["spk"], {"lines": 0, "f0": None})
     for c in cues:
         cast.setdefault(c["spk"], {"lines": 0, "f0": None})["lines"] += 1
     progress(95)
