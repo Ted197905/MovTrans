@@ -43,7 +43,9 @@ SYSTEM = (
     "they address each other consistent for the whole video, as fixed in the style guide. Different speakers "
     "must not sound like one narrator. Speaker tags: [F]/[M] female/male voice (a number tells same-sex speakers "
     "apart), [?] unknown, [SUB] a subtitle burned into the picture (translate it as the line), [TXT] an on-screen "
-    "caption such as a title, place, date or time (translate it as a caption, not as speech). Short lines stay short; interjections become the Korean interjection a "
+    "caption such as a title, place, date or time (translate it as a caption, not as speech). A line that is "
+    "narration (explaining the story to the viewer rather than spoken to someone in the scene) uses the narration "
+    "style fixed in the style guide, whatever its tag. Short lines stay short; interjections become the Korean interjection a "
     "person would really use. Keep each subtitle readable: at most two lines of about 16 Korean characters. "
     "Every output line must be fully Korean (Hangul); never leave source-language words, romanization or "
     "other scripts. Japanese personal names are written by their Japanese reading, never by the Korean reading "
@@ -122,8 +124,8 @@ def main():
             if not x.get("text"):
                 continue
             x = dict(x, text=" ".join(x["text"].split()))  # one line: the numbered protocol cannot carry newlines
-            if len("".join(x["text"].split())) < 2:
-                continue
+            if len("".join(x["text"].split())) < 2 or x["end"] - x["start"] < 1.5:
+                continue  # seen in a single 1 fps frame: small/unstable text (listings, tickers), not a caption
             key = "".join(x["text"].split())
             prev = next((m for m in reversed(screen[-8:]) if "".join(m["text"].split()) == key and x["start"] - m["end"] <= 4.0), None)
             if prev:
