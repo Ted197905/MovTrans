@@ -43,9 +43,14 @@ MOAN_JA = re.compile(r"[あぁいぃうぅえぇおぉんっーはひふへほ�
 MOAN_LATIN = re.compile(r"(?:[aeiou]+h*|h[aeiou]+|m+|hm+|uh+|ah+|oh+|mm+|mhm)")
 
 
+NONSPEECH = {"笑い", "笑い声", "笑", "拍手", "音楽", "bgm", "効果音", "無音", "沈黙", "字幕", "music", "laughter", "applause", "silence"}
+
+
 def is_hallucination(text):
     t = re.sub(r"[\s。、．，,.!！?？…・「」\"'()（）\-]", "", text).lower()
     if not t or MOAN_JA.fullmatch(t) or MOAN_LATIN.fullmatch(t):  # moans / interjections are not dialogue
+        return True
+    if t in NONSPEECH:  # the model described the sound instead of writing words
         return True
     m = re.fullmatch(r"(.)\1{2,}", t) or re.fullmatch(r"(..)\1{2,}", t)  # ああああ / はぁはぁはぁ (but not 行く行く行く)
     if m and MOAN_JA.fullmatch(m.group(1)):
