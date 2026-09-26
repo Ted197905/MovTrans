@@ -136,3 +136,4 @@ _modules/*
 /models/
 /.deploy/
 /secrets/
+__pycache__/
