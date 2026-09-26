@@ -251,7 +251,7 @@ def fill_pass(model_name, audio, clip_list, lang, device, compute, total):
     for s in seg_iter:
         progress(60 + 8 * min(1.0, s.end / total))
         text = (s.text or "").strip()
-        if not text or not keep_segment_plain(s):
+        if not text or not keep_segment_plain(s) or s.avg_logprob < -0.85:  # a fill line needs to be a confident one
             continue
         core = re.sub(r"[\s。、．，,.!！?？…]", "", text)
         if core in ("ごめん", "ごめんなさい", "すいません", "すみません") and any(abs(s.start - c) < 0.6 for c in starts):
