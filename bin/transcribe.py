@@ -561,11 +561,8 @@ def main():
             by_label.setdefault(w["spk"], []).append(w)
         names = {}
         for k, (lab, ws) in enumerate(sorted(by_label.items(), key=lambda kv: -len(kv[1])), 1):
-            f0s = [f for f in (pitch_hz(audio, w["start"], w["end"]) for w in ws[:: max(1, len(ws) // 80)]) if f]
-            f0 = float(np.median(f0s)) if len(f0s) >= 3 else None
             names[lab] = "S%d" % k
-            cast[names[lab]] = {"lines": 0, "f0": round(f0) if f0 else None,
-                                "voice": "unclear" if f0 is None else "male-sounding" if f0 < 150 else "female-sounding" if f0 > 200 else "ambiguous"}
+            cast[names[lab]] = {"lines": 0, "f0": None, "voice": "unclear"}  # pitch hint is measured on the cues below
         for w in words:
             w["spk"] = names.get(w["spk"], "")
         # diarization is trusted as it is (smoothing is for pitch-vote noise); only unlabeled words take a neighbour
@@ -582,6 +579,13 @@ def main():
         cues = build_cues(words, a.lang)
     for c in cues:
         cast.setdefault(c["spk"], {"lines": 0, "f0": None})["lines"] += 1
+    if turns:  # voice pitch per diarized speaker, measured on whole cues (single words are too short for F0)
+        for spk, info in cast.items():
+            mine = [c for c in cues if c["spk"] == spk and c["end"] - c["start"] >= 0.6]
+            f0s = [f for f in (pitch_hz(audio, c["start"], c["end"]) for c in mine[:: max(1, len(mine) // 80)]) if f]
+            f0 = float(np.median(f0s)) if len(f0s) >= 3 else None
+            info["f0"] = round(f0) if f0 else None
+            info["voice"] = "unclear" if f0 is None else "male-sounding" if f0 < 150 else "female-sounding" if f0 > 200 else "ambiguous"
     progress(95)
 
     segs = [{"start": round(c["start"], 3), "end": round(c["end"], 3), "text": c["text"], "spk": c["spk"]} for c in cues]
