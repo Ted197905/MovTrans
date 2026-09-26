@@ -444,7 +444,7 @@ def main():
     ap.add_argument("--fill-model", default="", help="second Whisper model run on spans the first left empty (e.g. kotoba-tech/kotoba-whisper-v2.0-faster)")
     ap.add_argument("--diarize-model", default="pyannote/speaker-diarization-3.1")
     ap.add_argument("--diarizer", default="auto", choices=["auto", "pyannote", "sortformer", "both", "pitch"],
-                    help="auto = pyannote if the token works, else Sortformer, else pitch; both = pyannote + Sortformer cross-check")
+                    help="auto = Sortformer (pyenv/nemo) if installed, else pyannote if the token works, else pitch; both = Sortformer + pyannote cross-check")
     ap.add_argument("--nemo-python", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "pyenv", "nemo", "bin", "python"))
     a = ap.parse_args()
 
@@ -536,18 +536,21 @@ def main():
     progress(62)
 
     cast = {}
+    # Sortformer first: on this material it keeps one cluster per person across scenes, pyannote 3.1 splits a
+    # person into several clusters by acoustics (5 clusters for 2 people). pyannote = cross-check / fallback.
     turns = None
-    if a.diarizer in ("auto", "pyannote", "both"):
-        turns = diarize(audio, a.hf_token, a.diarize_model)
+    if a.diarizer in ("auto", "sortformer", "both"):
+        turns = diarize_sortformer(a.audio, a.nemo_python)
         if turns:
-            log("diarization: pyannote, %d turns, %d speakers" % (len(turns), len({t[2] for t in turns})))
-    if a.diarizer == "both" or (a.diarizer in ("auto", "sortformer") and not turns):
-        turns2 = diarize_sortformer(a.audio, a.nemo_python)
+            log("diarization: Sortformer, %d turns, %d speakers" % (len(turns), len({t[2] for t in turns})))
+    if a.diarizer == "both" or (a.diarizer in ("auto", "pyannote") and not turns):
+        turns2 = diarize(audio, a.hf_token, a.diarize_model)
         if turns2 and turns:
-            log("diarization cross-check: pyannote vs Sortformer agree on %.0f%% of words" % (100 * agreement(words, turns, turns2)))
+            log("diarization cross-check: Sortformer vs pyannote (%d speakers) agree on %.0f%% of words"
+                % (len({t[2] for t in turns2}), 100 * agreement(words, turns, turns2)))
         elif turns2:
             turns = turns2
-            log("diarization: Sortformer, %d turns, %d speakers" % (len(turns), len({t[2] for t in turns})))
+            log("diarization: pyannote, %d turns, %d speakers" % (len(turns), len({t[2] for t in turns})))
     progress(78)
     if turns:
         # diarized clusters are named S1, S2, ... by size; the voice pitch is only a hint for the translator,

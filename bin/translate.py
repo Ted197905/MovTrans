@@ -55,7 +55,8 @@ SYSTEM = (
 
 BIBLE_PROMPT = (
     "Below is the dialogue script of a video ({lang}), sampled in order. Speaker tags: [S1], [S2], ... are voice "
-    "clusters from speaker diarization (normally one person each; the voice list gives a pitch hint), or F/M/? = "
+    "clusters from speaker diarization (normally one person each, but one person can get a second tag in another "
+    "scene, and a small tag can be noise; the voice list gives a pitch hint), or F/M/? = "
     "female/male/unknown by voice pitch only when no diarization ran (then several people can share a tag). Work "
     "out who each tag is from what is said and how they are addressed.\n\nVoices:\n{cast}\n\n"
     "[SUB] = subtitle burned into the picture, [TXT] = on-screen caption (titles, place/time, narration).\n\n"
