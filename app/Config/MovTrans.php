@@ -13,7 +13,10 @@ class MovTrans extends BaseConfig
     /** Extra sys.path entry (pip install --target ./pylibs). Empty to skip. */
     public string $pylibs = ROOTPATH . 'pylibs';
 
-    /** WhisperX model and compute type. */
+    /** Hugging Face token for pyannote speaker diarization (empty: per-line pitch only). */
+    public string $hfToken = '';
+
+    /** Whisper model and compute type. */
     public string $whisperModel = 'large-v3';
     public string $whisperCompute = 'float16';
 

@@ -63,14 +63,15 @@ class Ffmpeg
         }
     }
 
-    /** 720p H.264 proxy for codecs browsers may not play (HEVC, AV1, ...). */
+    /** Clean H.264 High / AAC stereo mp4 (max 1080p, faststart, first video + audio stream only). */
     public static function makeProxy(string $src, string $out, ?float $duration, ?callable $onProgress): void
     {
         $enc = self::hasNvenc()
-            ? ['-c:v', 'h264_nvenc', '-preset', 'p4', '-cq', '26']
-            : ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '24'];
-        $args = array_merge(['-i', $src, '-vf', "scale=-2:'min(ih,720)'", '-pix_fmt', 'yuv420p'], $enc,
-            ['-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart', $out]);
+            ? ['-c:v', 'h264_nvenc', '-preset', 'p4', '-cq', '23', '-profile:v', 'high']
+            : ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '22', '-profile:v', 'high'];
+        $args = array_merge(['-i', $src, '-map', '0:v:0', '-map', '0:a:0?', '-sn', '-dn',
+            '-vf', "scale=-2:'min(ih,1080)'", '-pix_fmt', 'yuv420p', '-g', '60'], $enc,
+            ['-c:a', 'aac', '-b:a', '160k', '-ac', '2', '-movflags', '+faststart', $out]);
         $r = self::run($args, $duration, $onProgress);
         if ($r['code'] !== 0 || ! is_file($out)) {
             throw new \RuntimeException('proxy encode failed: ' . mb_substr($r['stderr'], -800));

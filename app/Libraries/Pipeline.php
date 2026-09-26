@@ -66,6 +66,7 @@ class Pipeline
             $this->python($jobId, $echo, [
                 ROOTPATH . 'bin/transcribe.py', '--audio', $dir . '/audio.wav', '--lang', $video['lang'],
                 '--model', $this->cfg->whisperModel, '--compute', $this->cfg->whisperCompute, '--out-dir', $dir,
+                '--hf-token', $this->cfg->hfToken,
             ]);
             $this->requireFile($dir . '/segments.json');
 
@@ -76,7 +77,7 @@ class Pipeline
             } else {
                 $this->stage($jobId, 'scene');
                 $this->python($jobId, $echo, [
-                    ROOTPATH . 'bin/scene.py', '--video', $src, '--segments', $dir . '/segments.json',
+                    ROOTPATH . 'bin/scene.py', '--video', $dir . '/proxy.mp4', '--segments', $dir . '/segments.json',
                     '--out', $dir . '/scenes.json', '--frames-dir', $dir . '/frames',
                     '--ollama', $this->cfg->ollamaUrl, '--model', $this->cfg->vlModel, '--max-frames', (string) $this->cfg->maxFrames,
                 ]);
@@ -104,15 +105,13 @@ class Pipeline
 
     private function prepare(int $jobId, array $video, string $dir, string $src, ?float $dur, callable $echo): void
     {
-        // browsers play h264/vp8/vp9/av1 inside mp4/mov/webm; anything else gets a 720p H.264 proxy
-        $needProxy = ! in_array($video['vcodec'], ['h264', 'vp8', 'vp9', 'av1'], true)
-            || ! in_array(strtolower(pathinfo($src, PATHINFO_EXTENSION)), ['mp4', 'm4v', 'mov', 'webm'], true);
-        $split = $needProxy ? 30 : 100;
+        // every upload gets a clean H.264/AAC mp4 (playback + frame grabs); the source is kept untouched
+        $split = 15;
         if (! is_file($dir . '/audio.wav')) {
             Ffmpeg::extractAudio($src, $dir . '/audio.wav', $dur, fn (int $p) => $this->progress($jobId, (int) ($p * $split / 100)));
         }
         Storage::relax($dir . '/audio.wav');
-        if ($needProxy && ! $video['has_proxy']) {
+        if (! $video['has_proxy'] || ! is_file($dir . '/proxy.mp4')) {
             $echo('encoding H.264 proxy (' . ($video['vcodec'] ?? '?') . ')');
             Ffmpeg::makeProxy($src, $dir . '/proxy.mp4', $dur, fn (int $p) => $this->progress($jobId, $split + (int) ($p * (100 - $split) / 100)));
             Storage::relax($dir . '/proxy.mp4');

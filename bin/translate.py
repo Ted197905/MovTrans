@@ -20,7 +20,10 @@ BATCH = 15
 SYSTEM = (
     "You are a professional Korean subtitle translator. Translate dialogue lines into natural Korean subtitles "
     "as a native subtitler would write them: concise, idiomatic, matching each speaker's tone, register and "
-    "relationship (use the scene notes to choose honorifics and speech level consistently). {rating} "
+    "relationship. Each source line starts with a speaker tag in brackets: F = female voice, M = male voice, "
+    "the number tells speakers of the same sex apart, ? = unknown. Use the tags, the cast list and the scene "
+    "notes to give each speaker a consistent voice and speech level (banmal/jondaetmal, how they address each "
+    "other); different speakers must not sound like one narrator. Never put the tags in the output. {rating} "
     "Never summarize or skip a line. Keep each subtitle short enough to read (about 2 lines of 16 Korean characters). Do not add notes or "
     "explanations. Output only JSON."
 )
@@ -37,6 +40,7 @@ RATING = {
 
 USER = (
     "Video overview:\n{summary}\n\n"
+    "Cast (speaker tag: number of lines):\n{cast}\n\n"
     "Scene notes for these lines:\n{scenes}\n\n"
     "Previous Korean subtitles (for continuity, do not repeat them):\n{prev}\n\n"
     "Translate these {n} lines from {lang} to Korean. Reply with a JSON array of exactly {n} strings, "
@@ -56,7 +60,10 @@ def main():
     a = ap.parse_args()
     system = SYSTEM.format(rating=RATING[a.rating])
 
-    segs = json.load(open(a.segments, encoding="utf-8"))["segments"]
+    data = json.load(open(a.segments, encoding="utf-8"))
+    segs = data["segments"]
+    cast = "\n".join("- [%s]: %d lines" % (k, v.get("lines", 0)) for k, v in (data.get("cast") or {}).items()) or "(unknown)"
+    tag = lambda s: ("[%s] " % s["spk"]) if s.get("spk") else ""
     sc = json.load(open(a.scenes, encoding="utf-8"))
     summary = sc.get("summary") or "(none)"
     scenes = sc.get("scenes") or []
@@ -69,8 +76,8 @@ def main():
         lo = b * BATCH; hi = lo + len(batch)
         notes = [s["desc"] for s in scenes if lo <= s["idx"] < hi] or \
                 [s["desc"] for s in scenes if s["idx"] < hi][-2:]
-        lines = "\n".join("%d. %s" % (k + 1, s["text"]) for k, s in enumerate(batch))
-        user = USER.format(summary=summary, scenes="\n".join("- " + x for x in notes) or "(none)",
+        lines = "\n".join("%d. %s%s" % (k + 1, tag(s), s["text"]) for k, s in enumerate(batch))
+        user = USER.format(summary=summary, cast=cast, scenes="\n".join("- " + x for x in notes) or "(none)",
                            prev="\n".join(prev[-6:]) or "(none)", n=len(batch), lang=a.lang, lines=lines)
         ko = None
         for attempt in range(2):
@@ -90,15 +97,15 @@ def main():
             for s in batch:
                 try:
                     reply = ollama_chat(a.ollama, a.model, [{"role": "system", "content": system}, {"role": "user", "content":
-                        "Video overview:\n%s\n\nTranslate this %s line to a Korean subtitle. Reply with the Korean text only.\n\n%s"
-                        % (summary, a.lang, s["text"])}])
+                        "Video overview:\n%s\n\nTranslate this %s line to a Korean subtitle. Reply with the Korean text only.\n\n%s%s"
+                        % (summary, a.lang, tag(s), s["text"])}])
                     ko.append(re.sub(r"^[\"'\s]+|[\"'\s]+$", "", strip_think(reply)))
                 except Exception as e:
                     log("line failed: %s" % e)
                     ko.append(s["text"])
         for s, t in zip(batch, ko):
             out.append({"start": s["start"], "end": s["end"], "text": t or s["text"]})
-        prev = [t for t in ko if t]
+        prev = [tag(s) + t for s, t in zip(batch, ko) if t]
         progress(100 * hi / len(segs))
 
     # free VRAM for the next job's WhisperX run
