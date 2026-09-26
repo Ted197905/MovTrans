@@ -127,7 +127,7 @@ def main():
     script = "\n".join("%s%s" % (tag(s), s["text"]) for s in segs[:600])
     bible = "(none)"
     try:
-        bible = chat(BIBLE_PROMPT.format(lang=a.lang, summary=summary, script=script)).strip()[:1200]
+        bible = chat(BIBLE_PROMPT.format(lang=a.lang, summary=summary, script=script), think=True).strip()[:1200]
         log("style guide:\n" + bible)
     except Exception as e:
         log("style guide failed: %s" % e)
