@@ -25,6 +25,8 @@ class MovTrans extends BaseConfig
     /** Ollama endpoint and the vision model used for scene analysis + translation. */
     public string $ollamaUrl = 'http://127.0.0.1:11434';
     public string $vlModel   = 'huihui_ai/qwen3-vl-abliterated:8b-instruct';
+    /** Text model for the style guide and the translation itself (a 35B-A3B MoE runs split CPU/GPU at ~40 s per 25 lines). */
+    public string $textModel = 'huihui_ai/Qwen3.6-abliterated:35b-a3b-q4_K';
 
     /** Max frames sent to the VL model per video (segments are sampled evenly beyond this). */
     public int $maxFrames = 300;

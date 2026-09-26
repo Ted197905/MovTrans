@@ -87,7 +87,7 @@ class Pipeline
                 $this->stage($jobId, 'translate');
                 $this->python($jobId, $echo, [
                     ROOTPATH . 'bin/translate.py', '--segments', $dir . '/segments.json', '--scenes', $dir . '/scenes.json',
-                    '--lang', $video['lang'], '--out-dir', $dir, '--ollama', $this->cfg->ollamaUrl, '--model', $this->cfg->vlModel,
+                    '--lang', $video['lang'], '--out-dir', $dir, '--ollama', $this->cfg->ollamaUrl, '--model', $this->cfg->textModel,
                     '--rating', $video['rating'] ?? 'rated',
                 ]);
             }
