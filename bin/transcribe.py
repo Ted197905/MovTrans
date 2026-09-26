@@ -377,6 +377,15 @@ def build_cues(words, lang, max_dur=6.0, max_gap=0.7):
         cur.append(dict(w, word=txt if cjk else w["word"]))
     if cur:
         flush(cur)
+    merged = []  # a 1-2 char tail ("ね", "うん") right after a cue joins it
+    for c in cues:
+        if merged and len(c["text"]) <= (2 if cjk else 1) and c["start"] - merged[-1]["end"] < 0.5 \
+                and len(merged[-1]["text"]) + len(c["text"]) <= max_chars + 2:
+            merged[-1]["text"] += ("" if cjk else " ") + c["text"]
+            merged[-1]["end"] = c["end"]
+        else:
+            merged.append(c)
+    cues = merged
     for c in cues:  # readable minimum duration, without overlapping the next cue
         c["end"] = max(c["end"], c["start"] + 1.0)
     for a, b in zip(cues, cues[1:]):
