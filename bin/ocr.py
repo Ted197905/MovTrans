@@ -185,7 +185,7 @@ def main():
         if again is not None:
             for it in again:
                 out.append({"start": float(iv["start"]), "end": float(iv["end"]), "type": it["type"],
-                            "text": it["text"].strip(), "ko": (it.get("ko") or "").strip()})
+                            "text": " ".join(it["text"].split()), "ko": (it.get("ko") or "").strip()})
             continue
         t = (iv["start"] + iv["end"]) / 2.0
         frame = os.path.join(a.work, "read.jpg")
@@ -207,7 +207,7 @@ def main():
         read.append((mb, iv.get("sig"), kept))
         for it in kept:
             out.append({"start": float(iv["start"]), "end": float(iv["end"]), "type": it["type"],
-                        "text": it["text"].strip(), "ko": (it.get("ko") or "").strip()})
+                        "text": " ".join(it["text"].split()), "ko": (it.get("ko") or "").strip()})
             log("%s %d-%ds: %s -> %s" % (it["type"], iv["start"], iv["end"], it["text"][:40], (it.get("ko") or "")[:40]))
         progress(55 + 44 * (k + 1) / max(1, len(intervals)))
     shutil.rmtree(frames_dir, ignore_errors=True)

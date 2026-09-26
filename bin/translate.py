@@ -116,6 +116,7 @@ def main():
         for x in sorted(json.load(open(a.screen, encoding="utf-8")), key=lambda x: (x["start"], x.get("text", ""))):
             if not x.get("text"):
                 continue
+            x = dict(x, text=" ".join(x["text"].split()))  # one line: the numbered protocol cannot carry newlines
             prev = next((m for m in reversed(screen[-8:]) if m["text"] == x["text"] and x["start"] - m["end"] <= 4.0), None)
             if prev:
                 prev["end"] = max(prev["end"], x["end"])

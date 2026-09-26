@@ -80,7 +80,7 @@ def drop_persistent_text(cues, duration):
     not a caption: the vision model reads it in every frame it is asked about."""
     by = {}
     for c in cues:
-        by.setdefault(c["text"], []).append(c)
+        by.setdefault("".join(c["text"].split()), []).append(c)
     out = []
     for text, cs in by.items():
         span = max(c["end"] for c in cs) - min(c["start"] for c in cs)
