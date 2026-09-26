@@ -67,7 +67,7 @@ class Ffmpeg
     public static function makeProxy(string $src, string $out, ?float $duration, ?callable $onProgress): void
     {
         $enc = self::hasNvenc()
-            ? ['-c:v', 'h264_nvenc', '-preset', 'p4', '-cq', '23', '-profile:v', 'high']
+            ? ['-c:v', 'h264_nvenc', '-preset', 'p4', '-cq', '26', '-maxrate', '8M', '-bufsize', '16M', '-profile:v', 'high']
             : ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '22', '-profile:v', 'high'];
         $args = array_merge(['-i', $src, '-map', '0:v:0', '-map', '0:a:0?', '-sn', '-dn',
             '-vf', "scale=-2:'min(ih,1080)'", '-pix_fmt', 'yuv420p', '-g', '60'], $enc,

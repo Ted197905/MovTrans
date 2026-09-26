@@ -27,6 +27,11 @@ class WorkerRun extends BaseCommand
                 $log("job {$job['id']} video {$job['video_id']}");
                 $pipe->run($job, $log);
                 if ($once) return;
+                if (is_file(WRITEPATH . 'restart.flag')) {  // deploy.sh asked for a restart while we were busy
+                    @unlink(WRITEPATH . 'restart.flag');
+                    $log('restarting after deploy');
+                    return;
+                }
                 continue;
             }
             if ($once) { $log('no queued jobs'); return; }

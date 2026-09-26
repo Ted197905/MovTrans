@@ -109,6 +109,7 @@ class Videos extends BaseController
             @unlink($dir . '/' . $f);
         }
         Storage::removeDir($dir . '/frames');
+        Storage::removeDir($dir . '/ocr');
         (new VideoModel())->update($id, ['status' => 'queued']);
         (new JobModel())->insert(['video_id' => $id]);
     }
