@@ -136,10 +136,11 @@ def main():
                                                            {"role": "user", "content": user}], num_ctx=a.num_ctx, **kw))
 
     # 1. style guide from the whole script (first ~600 lines fit the context comfortably)
-    script = "\n".join("%s%s" % (tag(s), s["text"]) for s in segs[:600])
+    step = max(1, len(segs) // 300)  # ~300 lines spread over the whole video (CPU-side prefill is the slow part)
+    script = "\n".join("%s%s" % (tag(s), s["text"]) for s in segs[::step][:300])
     bible = "(none)"
     try:
-        bible = chat(BIBLE_PROMPT.format(lang=a.lang, summary=summary, script=script), think=True).strip()[:1200]
+        bible = chat(BIBLE_PROMPT.format(lang=a.lang, summary=summary, script=script)).strip()[:1200]
         log("style guide:\n" + bible)
     except Exception as e:
         log("style guide failed: %s" % e)
