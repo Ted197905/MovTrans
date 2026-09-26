@@ -70,13 +70,19 @@ php.ini(fpm): `upload_max_filesize`, `post_max_size` 를 32M 이상, `max_execut
 
 ### Python (WhisperX)
 
+서버 Python 이 3.14 라 whisperx(3.13 미만만 지원)를 설치할 수 없다. uv 로 Python 3.13 venv 를 `pyenv/` 에 만든다 (sudo 불필요, 시스템/MVCut 영향 없음).
+
 ```bash
-pip install --target ./pylibs --index-url https://download.pytorch.org/whl/cu126 torch torchaudio
-pip install --target ./pylibs -r bin/requirements.txt
-PYTHONPATH=./pylibs python3 -c "import whisperx; print('ok')"
+cd /var/www/movtrans/pyenv
+export UV_INSTALL_DIR=$PWD/bin UV_NO_MODIFY_PATH=1 UV_PYTHON_INSTALL_DIR=$PWD/python UV_CACHE_DIR=$PWD/.uv-cache
+curl -LsSf https://astral.sh/uv/install.sh | sh
+bin/uv python install 3.13
+bin/uv venv --python 3.13 venv
+bin/uv pip install --python venv/bin/python whisperx
+venv/bin/python -c "import torch, whisperx; print(torch.cuda.is_available())"
 ```
 
-`pylibs` 가 있으면 워커가 자동으로 `PYTHONPATH` 에 넣는다. venv 를 쓰려면 `.env` 에 `movtrans.python = /path/venv/bin/python` 을 지정하고 `movtrans.pylibs =` 로 비운다.
+`.env`: `movtrans.python = /var/www/movtrans/pyenv/venv/bin/python` (pylibs 폴더가 없으면 PYTHONPATH 는 설정되지 않는다).
 
 ### Ollama (Qwen3-VL)
 
@@ -100,7 +106,7 @@ WSL 에서 systemd 가 꺼져 있으면 `/etc/wsl.conf` 에 `[boot] systemd=true
 ## 배포 (STUDIO WSL)
 
 MVCut과 동일: Windows `MovTrans/ServerCode` 가 git 트리, `MovTrans/deploy.sh` 와 `MovTrans/.deploy/setup-ssh.sh` 는 트리 밖.
-Cowork device_bash 에서 `bash .deploy/setup-ssh.sh` 후 `./deploy.sh "메시지"`. rsync 는 `pylibs`, `models`, `writable`, `.env` 를 제외한다
+Cowork device_bash 에서 `bash .deploy/setup-ssh.sh` 후 `./deploy.sh "메시지"`. rsync 는 `pylibs`, `pyenv`, `models`, `writable`, `.env` 를 제외한다
 (서버 전용, `--delete` 로 지워지면 안 됨). 서버 경로 `/var/www/movtrans`, 소유자 `kaiseian:www-data`.
 
 ## 개발
