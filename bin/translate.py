@@ -25,7 +25,7 @@ BATCH = 25
 LOOKAHEAD = 4
 FOREIGN = re.compile(r"[぀-ヿ一-鿿฀-๿Ѐ-ӿ]")  # kana, CJK ideographs, Thai, Cyrillic
 # "12. text", tolerating leaked speaker tags: "12. [F] text", "12. F. text", "12. (M1) text", "12. F: text"
-NUMBERED = re.compile(r"^\s*(\d{1,3})\s*[.):]\s*(?:[\[(]?[FM?]\d?[\])]?\s*[.:\-]?\s*)?(.*?)\s*$")
+NUMBERED = re.compile(r"^\s*(\d{1,3})\s*[.):]\s*(?:[\[(]?(?:[FM?]\d?|SUB|TXT)[\])]?\s*[.:\-]?\s*)?(.*?)\s*$")
 
 RATING = {
     "rated": "Content level: RATED, like a US theatrical release. Keep the meaning, insults and innuendo, but phrase "
@@ -40,7 +40,9 @@ SYSTEM = (
     "actually say the line in that situation: natural spoken Korean, not textbook translation. Match each "
     "speaker's personality, mood and relationship; keep every speaker's speech level (반말/존댓말) and the way "
     "they address each other consistent for the whole video, as fixed in the style guide. Different speakers "
-    "must not sound like one narrator. Short lines stay short; interjections become the Korean interjection a "
+    "must not sound like one narrator. Speaker tags: [F]/[M] female/male voice (a number tells same-sex speakers "
+    "apart), [?] unknown, [SUB] a subtitle burned into the picture (translate it as the line), [TXT] an on-screen "
+    "caption such as a title, place, date or time (translate it as a caption, not as speech). Short lines stay short; interjections become the Korean interjection a "
     "person would really use. Keep each subtitle readable: at most two lines of about 16 Korean characters. "
     "Every output line must be fully Korean (Hangul); never leave source-language words, romanization or "
     "other scripts. Never add notes, explanations, speaker tags or brackets. {rating}"
@@ -91,14 +93,29 @@ def main():
     ap.add_argument("--model", required=True)
     ap.add_argument("--rating", choices=sorted(RATING), default="rated")
     ap.add_argument("--num-ctx", type=int, default=16384)
+    ap.add_argument("--screen", default="", help="screen.json from ocr.py (burned-in subtitles / captions)")
     a = ap.parse_args()
 
     data = json.load(open(a.segments, encoding="utf-8"))
     segs = data["segments"]
+    sounds = data.get("sounds") or []
+    screen = []
+    if a.screen and os.path.isfile(a.screen):
+        screen = [x for x in json.load(open(a.screen, encoding="utf-8")) if x.get("text")]
+    # a burned-in subtitle carries the line already: the ASR cue under it is dropped, the subtitle is translated instead
+    subs_iv = [(x["start"], x["end"]) for x in screen if x["type"] == "subtitle"]
+    if subs_iv:
+        before = len(segs)
+        segs = [s for s in segs if not any(min(e, s["end"]) - max(b, s["start"]) > 0.5 * (s["end"] - s["start"]) for b, e in subs_iv)]
+        log("%d ASR line(s) replaced by burned-in subtitles" % (before - len(segs)))
+    for x in screen:  # translated together with the dialogue so the style guide applies
+        segs.append({"start": x["start"], "end": max(x["end"], x["start"] + 1.5), "text": x["text"], "spk": "",
+                     "screen": x["type"]})
+    segs.sort(key=lambda s: s["start"])
     sc = json.load(open(a.scenes, encoding="utf-8"))
     summary = sc.get("summary") or "(none)"
     scenes = sc.get("scenes") or []
-    tag = lambda s: ("[%s] " % s["spk"]) if s.get("spk") else ""
+    tag = lambda s: ("[SUB] " if s.get("screen") == "subtitle" else "[TXT] " if s.get("screen") else ("[%s] " % s["spk"]) if s.get("spk") else "")
     system = SYSTEM.format(rating=RATING[a.rating])
     os.makedirs(a.out_dir, exist_ok=True)
 
@@ -158,7 +175,10 @@ def main():
         if redo:
             log("batch %d: %d line(s) redone" % (b, redo))
         for s, t in zip(batch, ko):
-            out.append({"start": s["start"], "end": s["end"], "text": t})
+            cue = {"start": s["start"], "end": s["end"], "text": t, "spk": s.get("spk", "")}
+            if s.get("screen") == "caption":
+                cue["pos"] = "top"
+            out.append(cue)
         prev = ["%s%s" % (tag(s), t) for s, t in zip(batch, ko)]
         progress(5 + 95 * hi / len(segs))
 
@@ -168,7 +188,35 @@ def main():
         log("unload failed: %s" % e)
     write_srt(os.path.join(a.out_dir, "ko.srt"), out)
     write_vtt(os.path.join(a.out_dir, "ko.vtt"), out)
+    sdh = build_sdh(out, sounds)
+    write_srt(os.path.join(a.out_dir, "ko.sdh.srt"), sdh)
+    write_vtt(os.path.join(a.out_dir, "ko.sdh.vtt"), sdh)
     progress(100)
+
+
+SOUND_KO = {"moan": "[신음]", "laugh": "[웃음]"}
+SPK_KO = {"F": "여", "M": "남"}
+
+
+def build_sdh(cues, sounds):
+    """SDH track: speaker labels when the speaker changes, and sound cues where nobody speaks."""
+    out, last = [], None
+    for c in cues:
+        t = c["text"]
+        spk = (c.get("spk") or "")[:1]
+        if spk in SPK_KO and spk != last and not c.get("pos"):
+            t = "%s: %s" % (SPK_KO[spk] + (c["spk"][1:] if len(c["spk"]) > 1 else ""), t)
+        if spk in SPK_KO:
+            last = spk
+        out.append(dict(c, text=t))
+    for snd in sounds:
+        if snd["kind"] not in SOUND_KO:
+            continue
+        if any(min(c["end"], snd["end"]) - max(c["start"], snd["start"]) > 0 for c in cues):
+            continue
+        out.append({"start": snd["start"], "end": snd["end"], "text": SOUND_KO[snd["kind"]]})
+    out.sort(key=lambda c: c["start"])
+    return out
 
 
 if __name__ == "__main__":

@@ -189,6 +189,24 @@ def clips_for(audio, max_len=30.0, pad=0.3):
 SUSPICIOUS = {"ありがとうございました", "ありがとうございます", "おやすみ", "おや", "すみ", "良い一日を", "はい", "thank you", "thanks", "bye"}
 
 
+LAUGH = re.compile(r"(ハハ|はは|ふふ|フフ|笑|haha|hehe|lol)", re.I)
+
+
+def sound_kind(text):
+    """Non-dialogue vocalisation Whisper wrote down: what an SDH track should show instead."""
+    t = re.sub(r"[\s。、．，,.!！?？…・「」\"'()（）\-〜～ー]", "", text).lower()
+    if not t:
+        return None
+    if LAUGH.search(text):
+        return "laugh"
+    if MOAN_JA.fullmatch(t) or MOAN_LATIN.fullmatch(t):
+        return "moan"
+    m = re.fullmatch(r"(.)\1{2,}", t) or re.fullmatch(r"(..)\1{2,}", t)
+    if m and MOAN_JA.fullmatch(m.group(1)):
+        return "moan"
+    return None
+
+
 def keep_segment(s, min_word_prob=0.0):
     text = (s.text or "").strip()
     if not text or not s.words:
@@ -368,9 +386,13 @@ def main():
                 kept.append(s)
             else:
                 rejected.append((float(s.start), float(s.end)))
+                kind = sound_kind((s.text or "").strip())
+                if kind and s.end - s.start >= 0.8:
+                    sounds.append({"start": round(float(s.start), 2), "end": round(min(float(s.end), float(s.start) + 30), 2), "kind": kind})
                 log("drop %.1f-%.1f (nsp %.2f lp %.2f cr %.2f): %s" % (s.start, s.end, s.no_speech_prob, s.avg_logprob, s.compression_ratio, (s.text or "").strip()[:40]))
         return kept, rejected, n
 
+    sounds = []
     kept, rejected, raw = transcribe(clips, [0.0, 0.3, 0.6], 8, 46)
     # windows Whisper turned into moans/hallucinations may still hold dialogue: retry them once from a shifted start
     retry = []
@@ -453,10 +475,17 @@ def main():
     progress(95)
 
     segs = [{"start": round(c["start"], 3), "end": round(c["end"], 3), "text": c["text"], "spk": c["spk"]} for c in cues]
+    merged = []  # adjacent same-kind sounds become one SDH cue
+    for snd in sorted(sounds, key=lambda x: x["start"]):
+        if merged and merged[-1]["kind"] == snd["kind"] and snd["start"] - merged[-1]["end"] < 2.0:
+            merged[-1]["end"] = max(merged[-1]["end"], snd["end"])
+        else:
+            merged.append(dict(snd))
+    sounds = merged
     log("cues %d, cast %s" % (len(segs), json.dumps(cast, ensure_ascii=False)))
     os.makedirs(a.out_dir, exist_ok=True)
     with open(os.path.join(a.out_dir, "segments.json"), "w", encoding="utf-8") as f:
-        json.dump({"lang": a.lang, "cast": cast, "segments": segs}, f, ensure_ascii=False, indent=1)
+        json.dump({"lang": a.lang, "cast": cast, "segments": segs, "sounds": sounds}, f, ensure_ascii=False, indent=1)
     write_srt(os.path.join(a.out_dir, "orig.srt"), segs)
     write_vtt(os.path.join(a.out_dir, "orig.vtt"), segs)
     progress(100)

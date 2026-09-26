@@ -161,8 +161,8 @@ window.MT = (() => {
     if (!video || !sel) return;
     const apply = () => {
       for (const t of video.textTracks) {
-        const isOrig = t.label.startsWith('원어');
-        t.mode = (sel.value === 'ko' && !isOrig) || (sel.value === 'orig' && isOrig) ? 'showing' : 'hidden';
+        const kind = t.label.startsWith('원어') ? 'orig' : t.label.includes('SDH') ? 'sdh' : 'ko';
+        t.mode = sel.value === kind ? 'showing' : 'hidden';
       }
     };
     sel.addEventListener('change', apply);

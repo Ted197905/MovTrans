@@ -30,10 +30,12 @@ def write_srt(path, segs):
 
 
 def write_vtt(path, segs):
+    """Cues with "pos": "top" are placed near the top of the picture (on-screen captions)."""
     with open(path, "w", encoding="utf-8") as f:
         f.write("WEBVTT\n\n")
         for s in segs:
-            f.write("%s --> %s\n%s\n\n" % (_ts(s["start"], "."), _ts(s["end"], "."), s["text"].strip()))
+            setting = " line:8% align:center" if s.get("pos") == "top" else ""
+            f.write("%s --> %s%s\n%s\n\n" % (_ts(s["start"], "."), _ts(s["end"], "."), setting, s["text"].strip()))
 
 
 _NO_THINK = {}  # model -> False when the model rejects the "think" option

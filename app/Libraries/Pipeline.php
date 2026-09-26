@@ -13,7 +13,7 @@ use Config\MovTrans;
  */
 class Pipeline
 {
-    public const STAGES = ['prepare', 'transcribe', 'scene', 'translate'];
+    public const STAGES = ['prepare', 'transcribe', 'scene', 'screen', 'translate'];
 
     private JobModel $jobs;
     private VideoModel $videos;
@@ -84,11 +84,22 @@ class Pipeline
                 ]);
                 $this->requireFile($dir . '/scenes.json');
 
+                $this->stage($jobId, 'screen');
+                try {
+                    $this->python($jobId, $echo, [
+                        ROOTPATH . 'bin/ocr.py', '--video', $dir . '/proxy.mp4', '--out', $dir . '/screen.json', '--work', $dir . '/ocr',
+                        '--ollama', $this->cfg->ollamaUrl, '--model', $this->cfg->vlModel,
+                    ]);
+                } catch (\Throwable $e) {  // on-screen text is a bonus: never fail the job over it
+                    $echo('screen text skipped: ' . $e->getMessage());
+                    @unlink($dir . '/screen.json');
+                }
+
                 $this->stage($jobId, 'translate');
                 $this->python($jobId, $echo, [
                     ROOTPATH . 'bin/translate.py', '--segments', $dir . '/segments.json', '--scenes', $dir . '/scenes.json',
                     '--lang', $video['lang'], '--out-dir', $dir, '--ollama', $this->cfg->ollamaUrl, '--model', $this->cfg->textModel,
-                    '--rating', $video['rating'] ?? 'rated',
+                    '--rating', $video['rating'] ?? 'rated', '--screen', $dir . '/screen.json',
                 ]);
             }
             $this->requireFile($dir . '/ko.vtt');

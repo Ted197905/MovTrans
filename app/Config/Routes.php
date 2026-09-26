@@ -26,5 +26,5 @@ $routes->group('', ['filter' => 'auth'], static function (RouteCollection $route
     $routes->get('api/videos/status', 'Videos::status');
 
     $routes->get('media/(:num)/video', 'Media::video/$1');
-    $routes->get('media/(:num)/sub/([a-z]+)\.([a-z]+)', 'Media::subtitle/$1/$2/$3');
+    $routes->get('media/(:num)/sub/([a-z.]+)\.([a-z]+)', 'Media::subtitle/$1/$2/$3');
 });

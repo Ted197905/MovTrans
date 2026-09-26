@@ -38,7 +38,7 @@ class Media extends BaseController
     /** /media/{id}/sub/{orig|ko}.{vtt|srt}  (?dl to download) */
     public function subtitle(int $id, string $track, string $ext)
     {
-        if (! in_array($track, ['orig', 'ko'], true) || ! in_array($ext, ['vtt', 'srt'], true)) {
+        if (! in_array($track, ['orig', 'ko', 'ko.sdh'], true) || ! in_array($ext, ['vtt', 'srt'], true)) {
             throw PageNotFoundException::forPageNotFound();
         }
         $video = (new VideoModel())->find($id) ?? throw PageNotFoundException::forPageNotFound();

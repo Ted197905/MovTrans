@@ -16,6 +16,7 @@ import argparse
 import base64
 import json
 import os
+import re
 import shutil
 import subprocess
 
@@ -27,15 +28,19 @@ PROMPT = (
     "Read every piece of text visible in this video frame, exactly as written (keep the original language). "
     "Classify each item:\n"
     "- subtitle: a burned-in dialogue subtitle, usually centered at the bottom\n"
-    "- caption: text addressed to the viewer that is not dialogue: title card, chapter title, place/date/time, "
-    "narration or explanation text, a shown message/letter\n"
-    "- sign: signage, shop names, products, posters, book covers, things in the background\n"
+    "- caption: text the video maker overlaid on the picture for the viewer, not dialogue: title card, chapter "
+    "title, place/date/time, narration or explanation text, a message shown as a graphic\n"
+    "- sign: any text physically present in the scene (signage, notices, posters, papers, screens, products, "
+    "clothing) even when it is readable and relevant\n"
     "- logo: broadcaster/studio logo, watermark, channel name, rating badge\n"
     "- ui: timers, counters, camera info\n"
     "Return only a JSON array: [{\"text\": \"...\", \"type\": \"subtitle|caption|sign|logo|ui\", "
     "\"ko\": \"natural Korean subtitle translation of the text (for subtitle and caption only, else empty)\"}]. "
     "If there is no text, return []. Do not refuse."
 )
+
+
+URLISH = re.compile(r"(https?://|www\.|\.(com|net|cc|tv|xyz|jp|kr|io)\b|地址|网址|@)", re.I)
 
 
 def probe_dims(video):
@@ -52,10 +57,13 @@ def iou(a, b):
     return inter / ua if ua > 0 else 0.0
 
 
+def main_box(boxes):
+    return max(boxes, key=lambda b: (b[1] - b[0]) * (b[3] - b[2]))
+
+
 def same_boxes(a, b):
-    if len(a) != len(b):
-        return False
-    return all(any(iou(x, y) > 0.5 for y in b) for x in a)
+    """Same main text box (detection splits a line into 1-2 boxes from frame to frame; compare the biggest)."""
+    return iou(main_box(a), main_box(b)) > 0.5
 
 
 def crop_sig(img, box):
@@ -115,17 +123,21 @@ def main():
             progress(5 + 45 * i / n)
     del reader; torch.cuda.empty_cache()
 
-    # static overlays: a box position seen in > 40 % of the frames
-    cell = lambda b: (round(b[0] / w * 20), round(b[1] / w * 20), round(b[2] / h * 20), round(b[3] / h * 20))
-    counts = {}
+    # static overlays (logo, watermark, rating badge): a box position that recurs in > 15 % of the frames
+    clusters = []  # [box, count]
     for boxes in per_frame:
-        for c in {cell(b) for b in boxes}:
-            counts[c] = counts.get(c, 0) + 1
-    static = {c for c, k in counts.items() if k > 0.4 * n}
+        for b in boxes:
+            for c in clusters:
+                if iou(c[0], b) > 0.4:
+                    c[1] += 1
+                    break
+            else:
+                clusters.append([b, 1])
+    static = [c[0] for c in clusters if c[1] > 0.15 * n]
     if static:
-        log("static overlays ignored: %d" % len(static))
+        log("static overlays ignored: %d (%s)" % (len(static), ", ".join("%d,%d-%d,%d x%d" % (c[0][0], c[0][2], c[0][1], c[0][3], c[1]) for c in clusters if c[1] > 0.15 * n)))
     for boxes in per_frame:
-        boxes[:] = [b for b in boxes if cell(b) not in static]
+        boxes[:] = [b for b in boxes if not any(iou(b, s) > 0.4 for s in static)]
 
     # intervals of unchanged text
     intervals, cur, prev_sig = [], None, None
@@ -135,28 +147,33 @@ def main():
                 intervals.append(cur); cur = None
             prev_sig = None
             continue
-        main_box = max(boxes, key=lambda b: (b[1] - b[0]) * (b[3] - b[2]))
-        sig = crop_sig(cv2.imread(os.path.join(frames_dir, files[i])), main_box)
+        mb = main_box(boxes)
+        sig = crop_sig(cv2.imread(os.path.join(frames_dir, files[i])), mb)
         changed = True
-        if cur and same_boxes(cur["boxes"], boxes) and sig is not None and prev_sig is not None and sig.shape == prev_sig.shape:
-            changed = float(np.mean(np.abs(sig - prev_sig))) > 18.0
+        if cur and same_boxes(cur["boxes"], boxes):
+            small = (mb[1] - mb[0]) * (mb[3] - mb[2]) < 0.015 * w * h  # a logo-sized box: same place = same text
+            if small or (sig is not None and prev_sig is not None and sig.shape == prev_sig.shape and float(np.mean(np.abs(sig - prev_sig))) <= 30.0):
+                changed = False
         if cur and not changed:
             cur["end"] = i + 1
         else:
             if cur:
                 intervals.append(cur)
-            cur = {"start": i, "end": i + 1, "boxes": boxes, "area": (main_box[1] - main_box[0]) * (main_box[3] - main_box[2])}
+            cur = {"start": i, "end": i + 1, "boxes": boxes, "area": (mb[1] - mb[0]) * (mb[3] - mb[2])}
         prev_sig = sig
     if cur:
         intervals.append(cur)
-    log("%d text interval(s)" % len(intervals))
+    log("%d text interval(s): %s" % (len(intervals), " ".join("%d-%d(%d,%d)" % (iv["start"], iv["end"], iv["boxes"][0][0], iv["boxes"][0][2]) for iv in intervals[:40])))
     if len(intervals) > a.max_intervals:
         intervals = sorted(intervals, key=lambda x: -(x["end"] - x["start"]) * x["area"])[:a.max_intervals]
         intervals.sort(key=lambda x: x["start"])
     progress(55)
 
     out = []
+    logo_boxes = []  # positions the model already classified as logo/sign/ui: skip identical ones
     for k, iv in enumerate(intervals):
+        if iv["boxes"] and all(any(iou(b, lb) > 0.5 for lb in logo_boxes) for b in iv["boxes"]):
+            continue
         t = (iv["start"] + iv["end"]) / 2.0
         frame = os.path.join(a.work, "read.jpg")
         subprocess.run(["ffmpeg", "-y", "-v", "error", "-ss", "%.2f" % t, "-i", a.video, "-frames:v", "1",
@@ -170,7 +187,10 @@ def main():
         except Exception as e:
             log("read failed at %ds: %s" % (t, str(e)[:120]))
             items = []
-        kept = [it for it in items if isinstance(it, dict) and it.get("type") in ("subtitle", "caption") and (it.get("text") or "").strip()]
+        kept = [it for it in items if isinstance(it, dict) and it.get("type") in ("subtitle", "caption") and (it.get("text") or "").strip()
+                and not URLISH.search(it["text"])]
+        if items and not kept:
+            logo_boxes += [b for b in iv["boxes"] if not any(iou(b, lb) > 0.5 for lb in logo_boxes)]
         for it in kept:
             out.append({"start": float(iv["start"]), "end": float(iv["end"]), "type": it["type"],
                         "text": it["text"].strip(), "ko": (it.get("ko") or "").strip()})

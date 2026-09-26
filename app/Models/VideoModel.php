@@ -19,7 +19,7 @@ class VideoModel extends Model
     public static function subtitles(int $id): array
     {
         $out = [];
-        foreach (['orig', 'ko'] as $track) {
+        foreach (['orig', 'ko', 'ko.sdh'] as $track) {
             foreach (['vtt', 'srt'] as $ext) {
                 if (is_file(self::dir($id) . "/{$track}.{$ext}")) $out[] = [$track, $ext];
             }
