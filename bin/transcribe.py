@@ -19,6 +19,7 @@ import json
 import math
 import os
 import re
+import zlib
 
 import numpy as np
 
@@ -207,11 +208,30 @@ def sound_kind(text):
     return None
 
 
+def repetitive(text):
+    """Whisper's compression ratio is per 30 s window, so one moan run would sink every line in the window;
+    this is the same test on the segment's own text."""
+    b = text.encode("utf-8")
+    return len(b) >= 24 and len(b) / len(zlib.compress(b)) > 2.4
+
+
+def looping(kept, s):
+    """The same sentence three or more times in a row is a decoder loop: keep the first, drop the rest."""
+    t = re.sub(r"[\s。、．，,.!！?？…]", "", s.text or "")
+    same = 0
+    for k in reversed(kept):
+        if re.sub(r"[\s。、．，,.!！?？…]", "", k.text or "") == t and s.start - k.end < 8.0:
+            same += 1
+        else:
+            break
+    return same >= 2
+
+
 def keep_segment(s, min_word_prob=0.0):
     text = (s.text or "").strip()
     if not text or not s.words:
         return False
-    if (s.no_speech_prob > 0.6 and s.avg_logprob < -1.0) or s.compression_ratio > 2.4 or is_hallucination(text):
+    if (s.no_speech_prob > 0.6 and s.avg_logprob < -1.0) or repetitive(text) or is_hallucination(text):
         return False
     core = re.sub(r"[\s。、．，,.!！?？…]", "", text).lower()
     if core in SUSPICIOUS and s.no_speech_prob > 0.4:
@@ -266,7 +286,7 @@ def fill_pass(model_name, audio, clip_list, lang, device, compute, total):
 def keep_segment_plain(s):
     """keep_segment for segments without word probabilities."""
     text = (s.text or "").strip()
-    if (s.no_speech_prob > 0.6 and s.avg_logprob < -1.0) or s.compression_ratio > 2.4 or is_hallucination(text):
+    if (s.no_speech_prob > 0.6 and s.avg_logprob < -1.0) or repetitive(text) or is_hallucination(text):
         return False
     core = re.sub(r"[\s。、．，,.!！?？…]", "", text).lower()
     return not (core in SUSPICIOUS and s.no_speech_prob > 0.4)
@@ -382,7 +402,7 @@ def main():
         for s in seg_iter:
             n += 1
             progress(base + span * min(1.0, s.end / total))
-            if keep_segment(s, min_word_prob):
+            if keep_segment(s, min_word_prob) and not looping(kept, s):
                 kept.append(s)
             else:
                 rejected.append((float(s.start), float(s.end)))
