@@ -78,6 +78,7 @@ class Pipeline
                 $this->python($jobId, $echo, [
                     ROOTPATH . 'bin/translate.py', '--segments', $dir . '/segments.json', '--scenes', $dir . '/scenes.json',
                     '--lang', $video['lang'], '--out-dir', $dir, '--ollama', $this->cfg->ollamaUrl, '--model', $this->cfg->vlModel,
+                    '--rating', $video['rating'] ?? 'rated',
                 ]);
             }
             $this->requireFile($dir . '/ko.vtt');

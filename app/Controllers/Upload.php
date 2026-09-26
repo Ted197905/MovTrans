@@ -25,7 +25,7 @@ class Upload extends BaseController
         return (bool) preg_match('/^[a-f0-9]{32}$/', $id);
     }
 
-    /** POST /api/upload/init {name, size, lang} */
+    /** POST /api/upload/init {name, size, lang, rating} */
     public function init()
     {
         $cfg  = config('MovTrans');
@@ -33,6 +33,7 @@ class Upload extends BaseController
         $name = (string) ($in['name'] ?? '');
         $size = (int) ($in['size'] ?? 0);
         $lang = (string) ($in['lang'] ?? '');
+        $rating = (string) ($in['rating'] ?? 'rated');
         $ext  = strtolower(pathinfo($name, PATHINFO_EXTENSION));
         if (! in_array($ext, $cfg->allowedExt, true)) {
             return $this->response->setStatusCode(415)->setJSON(['error' => '지원하지 않는 파일 형식입니다: .' . $ext]);
@@ -43,13 +44,16 @@ class Upload extends BaseController
         if (! isset(Videos::LANGS[$lang])) {
             return $this->response->setStatusCode(400)->setJSON(['error' => '원어를 선택하세요.']);
         }
+        if (! isset(Videos::RATINGS[$rating])) {
+            return $this->response->setStatusCode(400)->setJSON(['error' => '번역 수위를 선택하세요.']);
+        }
         $uploadId = bin2hex(random_bytes(16));
         $dir = $this->tmpDir($uploadId);
         if (! mkdir($dir, 0775, true)) {
             return $this->response->setStatusCode(500)->setJSON(['error' => '임시 디렉토리를 만들 수 없습니다.']);
         }
         Storage::relax(dirname($dir));
-        file_put_contents($dir . '/meta.json', json_encode(['name' => $name, 'size' => $size, 'ext' => $ext, 'lang' => $lang]));
+        file_put_contents($dir . '/meta.json', json_encode(['name' => $name, 'size' => $size, 'ext' => $ext, 'lang' => $lang, 'rating' => $rating]));
         return $this->response->setJSON(['ok' => true, 'uploadId' => $uploadId, 'chunkSize' => 8 * 1024 * 1024]);
     }
 
@@ -102,6 +106,7 @@ class Upload extends BaseController
             'filename' => 'source.' . $meta['ext'],
             'size'     => (int) $meta['size'],
             'lang'     => $meta['lang'],
+            'rating'   => $meta['rating'] ?? 'rated',
         ]);
         $mdir = VideoModel::dir($id);
         if (! is_dir($mdir) && ! mkdir($mdir, 0775, true)) {

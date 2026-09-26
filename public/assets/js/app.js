@@ -30,7 +30,7 @@ window.MT = (() => {
     });
   }
 
-  function uploader(drop, input, list, langSel) {
+  function uploader(drop, input, list, langSel, ratingSel) {
     const row = (name) => {
       const el = document.createElement('div');
       el.className = 'up';
@@ -47,7 +47,7 @@ window.MT = (() => {
       const r = row(file.name + ' (' + fmtSize(file.size) + ')');
       let uploadId = null;
       try {
-        const init = await post(base + 'api/upload/init', { name: file.name, size: file.size, lang: langSel.value });
+        const init = await post(base + 'api/upload/init', { name: file.name, size: file.size, lang: langSel.value, rating: ratingSel.value });
         uploadId = init.uploadId;
         const size = init.chunkSize || 8 * 1024 * 1024;
         const total = Math.max(1, Math.ceil(file.size / size));

@@ -13,6 +13,7 @@ $hasOrig = in_array(['orig', 'vtt'], $subtitles, true);
   </div>
   <p class="muted">
     원어 <?= esc($langs[$video['lang']] ?? $video['lang']) ?> /
+    <?= esc(strtoupper($video['rating'] ?? 'rated')) ?> /
     <?= $video['width'] && $video['height'] ? $video['width'] . 'x' . $video['height'] . ' ' : '' ?><?= esc($video['vcodec'] ?? '') ?> /
     <?= $video['duration'] ? gmdate((float) $video['duration'] >= 3600 ? 'G:i:s' : 'i:s', (int) $video['duration']) : '' ?> /
     <?= number_format($video['size'] / 1048576, 1) ?> MB
@@ -59,6 +60,13 @@ $hasOrig = in_array(['orig', 'vtt'], $subtitles, true);
       <select name="lang">
         <?php foreach ($langs as $code => $name): ?>
           <option value="<?= $code ?>" <?= $code === $video['lang'] ? 'selected' : '' ?>><?= esc($name) ?> (<?= $code ?>)</option>
+        <?php endforeach ?>
+      </select>
+    </label>
+    <label>번역 수위
+      <select name="rating">
+        <?php foreach ($ratings as $code => $name): ?>
+          <option value="<?= $code ?>" <?= $code === ($video['rating'] ?? 'rated') ? 'selected' : '' ?>><?= esc($name) ?></option>
         <?php endforeach ?>
       </select>
     </label>

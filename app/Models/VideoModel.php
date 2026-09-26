@@ -7,7 +7,7 @@ use CodeIgniter\Model;
 class VideoModel extends Model
 {
     protected $table         = 'videos';
-    protected $allowedFields = ['title', 'filename', 'size', 'duration', 'width', 'height', 'vcodec', 'has_proxy', 'lang', 'status'];
+    protected $allowedFields = ['title', 'filename', 'size', 'duration', 'width', 'height', 'vcodec', 'has_proxy', 'lang', 'rating', 'status'];
     protected $useTimestamps = true;
 
     public static function dir(int $id): string

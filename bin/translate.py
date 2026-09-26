@@ -3,7 +3,7 @@
 Context-aware Korean subtitle translation through Ollama.
 
   translate.py --segments segments.json --scenes scenes.json --lang en --out-dir DIR \
-               --ollama http://127.0.0.1:11434 --model MODEL
+               --ollama http://127.0.0.1:11434 --model MODEL --rating rated|unrated
 
 Writes DIR/ko.srt and DIR/ko.vtt. Segments are translated in batches with the video overview,
 the scene notes for that stretch, and the previous batch's Korean lines as continuity context.
@@ -20,11 +20,20 @@ BATCH = 15
 SYSTEM = (
     "You are a professional Korean subtitle translator. Translate dialogue lines into natural Korean subtitles "
     "as a native subtitler would write them: concise, idiomatic, matching each speaker's tone, register and "
-    "relationship (use the scene notes to choose honorifics and speech level consistently). Translate every "
-    "line faithfully including slang, profanity and sexual content; never soften, censor, summarize or skip. "
-    "Keep each subtitle short enough to read (about 2 lines of 16 Korean characters). Do not add notes or "
+    "relationship (use the scene notes to choose honorifics and speech level consistently). {rating} "
+    "Never summarize or skip a line. Keep each subtitle short enough to read (about 2 lines of 16 Korean characters). Do not add notes or "
     "explanations. Output only JSON."
 )
+
+RATING = {
+    # theatrical release: meaning and heat kept, wording at Korean cinema-subtitle level
+    "rated": "Content level: RATED, like a US theatrical release. Keep the meaning, insults and innuendo, but "
+             "phrase profanity and sexual content the way Korean theatrical release subtitles do: natural and "
+             "non-graphic, without explicit slang for sexual acts or body parts.",
+    # adult video: nothing toned down
+    "unrated": "Content level: UNRATED, like an adult video. Translate slang, profanity and explicit sexual content "
+               "literally with direct, explicit Korean wording; never soften, censor or euphemize.",
+}
 
 USER = (
     "Video overview:\n{summary}\n\n"
@@ -43,7 +52,9 @@ def main():
     ap.add_argument("--out-dir", required=True)
     ap.add_argument("--ollama", default="http://127.0.0.1:11434")
     ap.add_argument("--model", required=True)
+    ap.add_argument("--rating", choices=sorted(RATING), default="rated")
     a = ap.parse_args()
+    system = SYSTEM.format(rating=RATING[a.rating])
 
     segs = json.load(open(a.segments, encoding="utf-8"))["segments"]
     sc = json.load(open(a.scenes, encoding="utf-8"))
@@ -53,7 +64,7 @@ def main():
     out = []
     prev = []
     batches = [segs[i:i + BATCH] for i in range(0, len(segs), BATCH)]
-    log("model %s, %d lines in %d batches" % (a.model, len(segs), len(batches)))
+    log("model %s, rating %s, %d lines in %d batches" % (a.model, a.rating, len(segs), len(batches)))
     for b, batch in enumerate(batches):
         lo = b * BATCH; hi = lo + len(batch)
         notes = [s["desc"] for s in scenes if lo <= s["idx"] < hi] or \
@@ -65,7 +76,7 @@ def main():
         for attempt in range(2):
             try:
                 reply = ollama_chat(a.ollama, a.model,
-                                    [{"role": "system", "content": SYSTEM}, {"role": "user", "content": user}],
+                                    [{"role": "system", "content": system}, {"role": "user", "content": user}],
                                     num_ctx=8192)
                 arr = extract_json(reply)
                 if isinstance(arr, list) and len(arr) == len(batch):
@@ -78,7 +89,7 @@ def main():
             ko = []
             for s in batch:
                 try:
-                    reply = ollama_chat(a.ollama, a.model, [{"role": "system", "content": SYSTEM}, {"role": "user", "content":
+                    reply = ollama_chat(a.ollama, a.model, [{"role": "system", "content": system}, {"role": "user", "content":
                         "Video overview:\n%s\n\nTranslate this %s line to a Korean subtitle. Reply with the Korean text only.\n\n%s"
                         % (summary, a.lang, s["text"])}])
                     ko.append(re.sub(r"^[\"'\s]+|[\"'\s]+$", "", strip_think(reply)))
