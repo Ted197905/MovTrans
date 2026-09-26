@@ -329,35 +329,47 @@ def smooth_speakers(words, lang):
             return
 
 
-def build_cues(words, lang, max_dur=6.0, max_gap=0.7):
-    max_chars = 28 if lang in NO_SPACE_LANGS else 64
-    joiner = "" if lang in NO_SPACE_LANGS else " "
-    cues, cur = [], None
+BREAK_JA = re.compile(r"([。、！？!?…]|[てでにはがをとねよかのもし])$")  # punctuation or a particle: a place to cut
 
-    def flush():
-        nonlocal cur
-        if cur and cur["text"].strip():
-            cur["text"] = cur["text"].strip()
-            cues.append(cur)
-        cur = None
+
+def build_cues(words, lang, max_dur=6.0, max_gap=0.7):
+    """Words -> subtitle cues. A cue ends at a speaker change, a pause, 6 s or ~28 CJK chars; when it is the
+    length that ends it, the cut moves back to the last punctuation/particle so words are not split in half."""
+    max_chars = 28 if lang in NO_SPACE_LANGS else 64
+    cjk = lang in NO_SPACE_LANGS
+    cues, cur = [], []
+
+    def text_of(ws):
+        return ("".join(w["word"].strip() for w in ws) if cjk else "".join(w["word"] for w in ws)).strip()
+
+    def flush(ws):
+        t = text_of(ws)
+        if t:
+            cues.append({"start": ws[0]["start"], "end": ws[-1]["end"], "text": t, "spk": ws[0]["spk"]})
 
     for w in words:
-        txt = w["word"].strip() if lang in NO_SPACE_LANGS else w["word"]
-        if cur is not None:
-            gap = w["start"] - cur["end"]
-            dur = w["end"] - cur["start"]
-            ends_sentence = bool(re.search(r"[。！？!?]\s*$", cur["text"]))
+        txt = w["word"].strip() if cjk else w["word"]
+        if cur:
+            ctext = text_of(cur)
+            gap = w["start"] - cur[-1]["end"]
+            dur = w["end"] - cur[0]["start"]
+            ends_sentence = bool(re.search(r"[。！？!?]\s*$", ctext))
             # a segment's first token often carries a placeholder timestamp: never leave a 1-2 char cue behind
-            tiny = len(cur["text"].strip()) < (3 if lang in NO_SPACE_LANGS else 2)
-            if ((w["spk"] != cur["spk"] and not tiny) or (gap > max_gap and not tiny) or dur > max_dur
-                    or len(cur["text"]) + len(txt) > max_chars or (ends_sentence and dur > 1.5)):
-                flush()
-        if cur is None:
-            cur = {"start": w["start"], "end": w["end"], "text": txt.strip(), "spk": w["spk"]}
-        else:
-            cur["text"] += joiner + txt if lang in NO_SPACE_LANGS else txt
-            cur["end"] = w["end"]
-    flush()
+            tiny = len(ctext) < (3 if cjk else 2)
+            too_long = dur > max_dur or len(ctext) + len(txt) > max_chars
+            if (w["spk"] != cur[0]["spk"] and not tiny) or (gap > max_gap and not tiny) or (ends_sentence and dur > 1.5):
+                flush(cur); cur = []
+            elif too_long:
+                cut = len(cur)  # default: cut here
+                if cjk and len(cur) > 3:
+                    for j in range(len(cur) - 1, max(1, len(cur) - 10), -1):  # last break point in the tail
+                        if BREAK_JA.search(cur[j]["word"].strip()) and len(text_of(cur[:j + 1])) >= 6:
+                            cut = j + 1
+                            break
+                flush(cur[:cut]); cur = cur[cut:]
+        cur.append(dict(w, word=txt if cjk else w["word"]))
+    if cur:
+        flush(cur)
     for c in cues:  # readable minimum duration, without overlapping the next cue
         c["end"] = max(c["end"], c["start"] + 1.0)
     for a, b in zip(cues, cues[1:]):
