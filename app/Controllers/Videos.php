@@ -76,7 +76,7 @@ class Videos extends BaseController
     {
         $video = (new VideoModel())->find($id) ?? throw PageNotFoundException::forPageNotFound();
         $this->enqueue($video);
-        return redirect()->back();
+        return redirect()->to('/videos');  // not back(): CI4 keeps one 'previous URL' per session, so another tab's page wins
     }
 
     /** Queue a fresh pipeline run, optionally changing language/rating. */
