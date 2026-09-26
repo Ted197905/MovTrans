@@ -52,7 +52,8 @@ SYSTEM = (
 BIBLE_PROMPT = (
     "Below is the overview of a video and its full dialogue script ({lang}). Speaker tags: F = female voice, "
     "M = male voice, a number tells speakers of the same sex apart, ? = unknown.\n\n"
-    "Overview:\n{summary}\n\nScript:\n{script}\n\n"
+    "Overview from an automatic scene analysis (it can be wrong about who is who; the script is the authority):\n"
+    "{summary}\n\nScript (sampled lines in order; [SUB] = subtitle burned into the picture, [TXT] = on-screen caption):\n{script}\n\n"
     "Write a concise style guide, in Korean, for translating these subtitles as a Korean subtitler would "
     "(no more than 350 characters, plain lines, no markdown):\n"
     "1. 등장인물: 태그별로 누구인지 (이름/호칭이 대사에 나오면 그대로), 성별, 대략 나이, 성격, 역할\n"
