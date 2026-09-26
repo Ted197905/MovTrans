@@ -46,9 +46,10 @@ def is_hallucination(text):
     t = re.sub(r"[\s。、．，,.!！?？…・「」\"'()（）\-]", "", text).lower()
     if not t or MOAN_JA.fullmatch(t) or MOAN_LATIN.fullmatch(t):  # moans / interjections are not dialogue
         return True
-    if re.fullmatch(r"(.)\1{2,}", t) or re.fullmatch(r"(..)\1{2,}", t):  # ああああ / はぁはぁはぁ
+    m = re.fullmatch(r"(.)\1{2,}", t) or re.fullmatch(r"(..)\1{2,}", t)  # ああああ / はぁはぁはぁ (but not 行く行く行く)
+    if m and MOAN_JA.fullmatch(m.group(1)):
         return True
-    if len(set(t)) <= 2 and len(t) >= 6:
+    if len(set(t)) <= 2 and len(t) >= 6 and MOAN_JA.fullmatch(t):
         return True
     for h in HALLUCINATIONS:
         h2 = re.sub(r"[\s']", "", h).lower()
@@ -200,6 +201,59 @@ def keep_segment(s, min_word_prob=0.0):
     return sum(w.probability for w in s.words) / len(s.words) >= min_word_prob
 
 
+def fill_pass(model_name, audio, clip_list, lang, device, compute, total):
+    """Second Whisper model (no word timestamps: distil models cannot align) + wav2vec2 forced alignment."""
+    from faster_whisper import WhisperModel
+    m = WhisperModel(model_name, device=device, compute_type=compute)
+    seg_iter, _ = m.transcribe(audio, language=lang, beam_size=5, temperature=[0.0, 0.3], word_timestamps=False,
+                               condition_on_previous_text=False, vad_filter=False,
+                               clip_timestamps=[x for c in clip_list for x in c])
+    starts = [c[0] for c in clip_list]
+    segs = []
+    for s in seg_iter:
+        progress(60 + 8 * min(1.0, s.end / total))
+        text = (s.text or "").strip()
+        if not text or not keep_segment_plain(s):
+            continue
+        core = re.sub(r"[\s。、．，,.!！?？…]", "", text)
+        if core in ("ごめん", "ごめんなさい", "すいません", "すみません") and any(abs(s.start - c) < 0.6 for c in starts):
+            continue  # kotoba-whisper's own filler on a window that starts in noise
+        segs.append({"start": float(s.start), "end": float(s.end), "text": text})
+    del m; gc.collect()
+    if device == "cuda":
+        import torch
+        torch.cuda.empty_cache()
+    log("fill pass: %d segment(s) kept" % len(segs))
+    if not segs:
+        return []
+    words = []
+    try:
+        import whisperx
+        align_model, meta = whisperx.load_align_model(language_code=lang, device=device)
+        res = whisperx.align(segs, align_model, meta, audio, device, return_char_alignments=False)
+        del align_model; gc.collect()
+        for s in res["segments"]:
+            for w in s.get("words", []):
+                if "start" in w and w["word"].strip():
+                    words.append({"start": float(w["start"]), "end": float(w["end"]), "word": w["word"], "spk": ""})
+    except Exception as e:
+        log("fill alignment failed (%s); using segment times" % str(e).split("\n")[0][:200])
+        for s in segs:
+            words.append({"start": s["start"], "end": s["end"], "word": s["text"], "spk": ""})
+    for s in segs[:400]:
+        log("fill %.1f-%.1f: %s" % (s["start"], s["end"], s["text"][:40]))
+    return words
+
+
+def keep_segment_plain(s):
+    """keep_segment for segments without word probabilities."""
+    text = (s.text or "").strip()
+    if (s.no_speech_prob > 0.6 and s.avg_logprob < -1.0) or s.compression_ratio > 2.4 or is_hallucination(text):
+        return False
+    core = re.sub(r"[\s。、．，,.!！?？…]", "", text).lower()
+    return not (core in SUSPICIOUS and s.no_speech_prob > 0.4)
+
+
 def smooth_speakers(words, lang):
     """Pitch votes flip on single tokens: a short run joins the neighbouring run closest in time (isolated
     A-B-A flips vanish; a genuine one-word turn is absorbed too, which beats a fragment cue)."""
@@ -282,6 +336,7 @@ def main():
     ap.add_argument("--compute", default="float16")
     ap.add_argument("--out-dir", required=True)
     ap.add_argument("--hf-token", default="")
+    ap.add_argument("--fill-model", default="", help="second Whisper model run on spans the first left empty (e.g. kotoba-tech/kotoba-whisper-v2.0-faster)")
     ap.add_argument("--diarize-model", default="pyannote/speaker-diarization-3.1")
     a = ap.parse_args()
 
@@ -341,9 +396,29 @@ def main():
         for w in s.words:
             if w.word.strip():
                 words.append({"start": float(w.start), "end": float(w.end), "word": w.word, "spk": ""})
-    words.sort(key=lambda w: w["start"])
     log("segments %d, rejected %d, kept %d, words %d" % (raw, len(rejected), len(kept), len(words)))
     del model; gc.collect()
+    if device == "cuda":
+        torch.cuda.empty_cache()
+
+    if a.fill_model:
+        # a second model listens to everything the first left empty; a different model fails differently
+        # (large-v3 turns moaning scenes into garbage windows, kotoba-whisper keeps the short lines between them)
+        holes, pos = [], 0.0
+        for s, e in sorted(spans) + [(total, total)]:
+            if s - pos >= 3.0:
+                holes.append([pos, s])
+            pos = max(pos, e)
+        fill_clips = []
+        for hs, he in holes:
+            for cs, ce in clips_for(audio[int(hs * SR):int(he * SR)]):
+                fill_clips.append([hs + cs, hs + ce])
+        log("fill pass: %s on %d span(s), %.0fs" % (a.fill_model, len(holes), sum(e - s for s, e in holes)))
+        fill_words = fill_pass(a.fill_model, audio, fill_clips, a.lang, device, compute, total)
+        for w in fill_words:
+            words.append(w)
+        spans += [(w["start"], w["end"]) for w in fill_words]
+    words.sort(key=lambda w: w["start"])
     if device == "cuda":
         torch.cuda.empty_cache()
     progress(62)

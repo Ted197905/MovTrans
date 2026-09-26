@@ -67,6 +67,7 @@ class Pipeline
                 ROOTPATH . 'bin/transcribe.py', '--audio', $dir . '/audio.wav', '--lang', $video['lang'],
                 '--model', $this->cfg->whisperModel, '--compute', $this->cfg->whisperCompute, '--out-dir', $dir,
                 '--hf-token', $this->cfg->hfToken,
+                '--fill-model', $video['lang'] === 'ja' ? $this->cfg->whisperFillModel : '',
             ]);
             $this->requireFile($dir . '/segments.json');
 

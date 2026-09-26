@@ -18,6 +18,8 @@ class MovTrans extends BaseConfig
 
     /** Whisper model and compute type. */
     public string $whisperModel = 'large-v3';
+    /** Second model for spans the first left empty (empty string disables). Japanese: kotoba-whisper. */
+    public string $whisperFillModel = 'kotoba-tech/kotoba-whisper-v2.0-faster';
     public string $whisperCompute = 'float16';
 
     /** Ollama endpoint and the vision model used for scene analysis + translation. */
