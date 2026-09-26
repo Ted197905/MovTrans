@@ -46,8 +46,8 @@ SYSTEM = (
     "caption such as a title, place, date or time (translate it as a caption, not as speech). Short lines stay short; interjections become the Korean interjection a "
     "person would really use. Keep each subtitle readable: at most two lines of about 16 Korean characters. "
     "Every output line must be fully Korean (Hangul); never leave source-language words, romanization or "
-    "other scripts. Japanese personal names are written by their Japanese reading (神木 -> 카미키), never by the "
-    "Korean reading of the characters. Never add notes, explanations, speaker tags or brackets. {rating}"
+    "other scripts. Japanese personal names are written by their Japanese reading, never by the Korean reading "
+    "of the characters. Never add notes, explanations, speaker tags or brackets. {rating}"
 )
 
 BIBLE_PROMPT = (
