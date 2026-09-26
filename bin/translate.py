@@ -17,6 +17,12 @@ import time
 from subs import extract_json, log, ollama_chat, ollama_unload, progress, strip_think, write_srt, write_vtt
 
 BATCH = 15
+FOREIGN = re.compile(r"[\u3040-\u30ff\u4e00-\u9fff\u0e00-\u0e7f\u0400-\u04ff]")  # kana, CJK ideographs, Thai, Cyrillic
+
+
+def bad(src, ko):
+    """A batch line that came back untranslated, partly untranslated or in another script."""
+    return not ko or ko == src or FOREIGN.search(ko) is not None
 
 SYSTEM = (
     "You are a professional Korean subtitle translator. Translate dialogue lines into natural Korean subtitles "
@@ -24,7 +30,9 @@ SYSTEM = (
     "relationship. Each source line starts with a speaker tag in brackets: F = female voice, M = male voice, "
     "the number tells speakers of the same sex apart, ? = unknown. Use the tags, the cast list and the scene "
     "notes to give each speaker a consistent voice and speech level (banmal/jondaetmal, how they address each "
-    "other); different speakers must not sound like one narrator. Never put the tags in the output. {rating} "
+    "other); decide each speaker's speech level once from the overview and keep it for every line. Different "
+    "speakers must not sound like one narrator. Never put the tags in the output. Output Korean only: every line "
+    "must be fully translated into Hangul, never leave source-language words or other scripts in it. {rating} "
     "Never summarize or skip a line. Keep each subtitle short enough to read (about 2 lines of 16 Korean characters). Do not add notes or "
     "explanations. Output only JSON."
 )
@@ -95,17 +103,31 @@ def main():
                 log("batch %d: got %s items, want %d" % (b, len(arr) if isinstance(arr, list) else "?", len(batch)))
             except Exception as e:
                 log("batch %d attempt %d failed: %s" % (b, attempt + 1, e))
+        def one(s):
+            reply = ollama_chat(a.ollama, a.model, [{"role": "system", "content": system}, {"role": "user", "content":
+                "Video overview:\n%s\n\nTranslate this %s line to a Korean subtitle. Reply with the Korean text only, in Hangul.\n\n%s%s"
+                % (summary, a.lang, tag(s), s["text"])}])
+            return re.sub(r"^[\"'\s]+|[\"'\s]+$", "", strip_think(reply))
+
         if ko is None:  # fall back to one line at a time so the job still completes
             ko = []
             for s in batch:
                 try:
-                    reply = ollama_chat(a.ollama, a.model, [{"role": "system", "content": system}, {"role": "user", "content":
-                        "Video overview:\n%s\n\nTranslate this %s line to a Korean subtitle. Reply with the Korean text only.\n\n%s%s"
-                        % (summary, a.lang, tag(s), s["text"])}])
-                    ko.append(re.sub(r"^[\"'\s]+|[\"'\s]+$", "", strip_think(reply)))
+                    ko.append(one(s))
                 except Exception as e:
                     log("line failed: %s" % e)
                     ko.append(s["text"])
+        redo = 0
+        for k, s in enumerate(batch):  # lines the batch left untranslated get a second, single-line pass
+            if bad(s["text"], ko[k]):
+                redo += 1
+                try:
+                    t = one(s)
+                    ko[k] = t if not bad(s["text"], t) else re.sub(FOREIGN, "", t).strip() or ko[k]
+                except Exception as e:
+                    log("line redo failed: %s" % e)
+        if redo:
+            log("batch %d: %d line(s) retranslated" % (b, redo))
         for s, t in zip(batch, ko):
             out.append({"start": s["start"], "end": s["end"], "text": t or s["text"]})
         prev = [tag(s) + t for s, t in zip(batch, ko) if t]

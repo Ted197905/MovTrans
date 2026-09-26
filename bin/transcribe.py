@@ -164,7 +164,8 @@ def speaker_at(turns, start, end):
 
 
 def smooth_speakers(words, lang):
-    """Pitch votes flip on single tokens; an isolated short run A-B-A becomes A-A-A (real turns persist)."""
+    """Pitch votes flip on single tokens: a short run joins the neighbouring run closest in time (isolated
+    A-B-A flips vanish; a genuine one-word turn is absorbed too, which beats a fragment cue)."""
     min_chars = 5 if lang in NO_SPACE_LANGS else 2
     while True:
         runs = []  # [label, first index, last index]
@@ -174,17 +175,27 @@ def smooth_speakers(words, lang):
             else:
                 runs.append([w["spk"], i, i])
         changed = False
-        for k in range(1, len(runs) - 1):
-            lab, a, b = runs[k]
-            if runs[k - 1][0] != runs[k + 1][0] or runs[k - 1][0] == lab:
-                continue
+        for k, (lab, a, b) in enumerate(runs):
             dur = words[b]["end"] - words[a]["start"]
             chars = sum(len(w["word"].strip()) for w in words[a:b + 1])
-            if dur < 1.0 or chars < min_chars:
-                for w in words[a:b + 1]:
-                    w["spk"] = runs[k - 1][0]
-                changed = True
-                break
+            if dur >= 1.0 and chars >= min_chars and lab != "?":
+                continue
+            prev = runs[k - 1] if k > 0 else None
+            nxt = runs[k + 1] if k + 1 < len(runs) else None
+            gp = words[a]["start"] - words[prev[2]]["end"] if prev else None
+            gn = words[nxt[1]]["start"] - words[b]["end"] if nxt else None
+            if prev and (gn is None or gp <= gn) and gp < 1.5:
+                target = prev[0]
+            elif nxt and gn < 1.5:
+                target = nxt[0]
+            else:
+                continue
+            if target == lab:
+                continue
+            for w in words[a:b + 1]:
+                w["spk"] = target
+            changed = True
+            break
         if not changed:
             return
 
