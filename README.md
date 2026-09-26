@@ -5,7 +5,7 @@
 
 ## 흐름
 
-1. 업로드 (청크 8 MB, 최대 8 GB) + 원어 선택 -> `videos` 행과 `jobs` 행 생성
+1. 업로드 (청크 8 MB, 최대 10 GB) + 원어 선택 -> `videos` 행과 `jobs` 행 생성
 2. 워커 `php spark worker:run` 이 `jobs` 를 2초마다 폴링해 단계별로 실행
    - `prepare`   ffmpeg 16 kHz 오디오 추출, 브라우저가 못 재생하는 코덱/컨테이너면 720p H.264 프록시
    - `transcribe` `bin/transcribe.py` WhisperX 전사 + 정렬 -> `segments.json`, `orig.srt/vtt`

@@ -25,6 +25,6 @@ class MovTrans extends BaseConfig
     public int $maxFrames = 300;
 
     /** Upload limits. */
-    public int $maxUploadBytes = 8 * 1024 * 1024 * 1024;
+    public int $maxUploadBytes = 10 * 1024 * 1024 * 1024;
     public array $allowedExt = ['mp4', 'mkv', 'mov', 'avi', 'webm', 'm4v', 'ts', 'wmv', 'flv'];
 }
