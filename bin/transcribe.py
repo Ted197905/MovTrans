@@ -4,7 +4,9 @@ Transcription with word timestamps, hallucination filtering, speaker labels and 
 
   transcribe.py --audio audio.wav --lang ja --model large-v3 --compute float16 --out-dir DIR [--hf-token TOKEN]
 
-Pipeline: faster-whisper (word timestamps, no VAD: silero merges moaning/music into huge chunks and dialogue is lost) -> drop hallucinated / non-speech segments
+Pipeline: faster-whisper over the whole audio, cut into <=30 s clips that start at silero speech onsets (a window that
+starts in silence/music makes Whisper skip the first utterances; VAD filtering itself would drop quiet dialogue between
+moans). Windows whose output was rejected get one more pass with a shifted start. -> drop hallucinated / non-speech segments
 -> speaker labels (pyannote diarization when --hf-token is given, else per-cue pitch -> F/M)
 -> regroup words into cues (max 6 s / ~28 CJK chars, split at pauses and speaker changes).
 
@@ -14,6 +16,7 @@ DIR/orig.srt, DIR/orig.vtt. Progress goes to stderr as "progress <0..100>".
 import argparse
 import gc
 import json
+import math
 import os
 import re
 
@@ -163,6 +166,31 @@ def speaker_at(turns, start, end):
     return best
 
 
+def clips_for(audio, max_len=30.0, pad=0.3):
+    """Partition of the whole timeline into <=30 s clips, cutting just before each speech onset that follows a pause."""
+    from faster_whisper.vad import VadOptions, get_speech_timestamps
+    total = len(audio) / SR
+    cuts, prev_end = [0.0], 0.0
+    for t in get_speech_timestamps(audio, VadOptions(threshold=0.3, min_silence_duration_ms=300, speech_pad_ms=0)):
+        s, e = t["start"] / SR, t["end"] / SR
+        if s - prev_end > 1.0 and s - pad - cuts[-1] > 1.0:
+            cuts.append(s - pad)
+        prev_end = e
+    cuts.append(total)
+    out = []
+    for x, y in zip(cuts, cuts[1:]):
+        n = max(1, math.ceil((y - x) / max_len)); step = (y - x) / n
+        out += [[x + i * step, x + (i + 1) * step] for i in range(n)]
+    return out
+
+
+def keep_segment(s):
+    text = (s.text or "").strip()
+    if not text or not s.words:
+        return False
+    return not ((s.no_speech_prob > 0.6 and s.avg_logprob < -1.0) or s.compression_ratio > 2.4 or is_hallucination(text))
+
+
 def smooth_speakers(words, lang):
     """Pitch votes flip on single tokens: a short run joins the neighbouring run closest in time (isolated
     A-B-A flips vanish; a genuine one-word turn is absorbed too, which beats a fragment cue)."""
@@ -259,27 +287,51 @@ def main():
     progress(2)
 
     model = WhisperModel(a.model, device=device, compute_type=compute)
+    clips = clips_for(audio)
+    log("%d clips" % len(clips))
     progress(8)
-    seg_iter, info = model.transcribe(
-        audio, language=a.lang, beam_size=5, word_timestamps=True, temperature=[0.0, 0.3, 0.6],
-        condition_on_previous_text=False, hallucination_silence_threshold=2.0, vad_filter=False,
-    )
-    words, spans, dropped, raw = [], [], 0, 0
-    for s in seg_iter:
-        raw += 1
-        progress(8 + 52 * min(1.0, s.end / total))
-        text = (s.text or "").strip()
-        if not text or not s.words:
-            continue
-        if (s.no_speech_prob > 0.6 and s.avg_logprob < -1.0) or s.compression_ratio > 2.4 or is_hallucination(text):
-            dropped += 1
-            log("drop %.1f-%.1f (nsp %.2f lp %.2f cr %.2f): %s" % (s.start, s.end, s.no_speech_prob, s.avg_logprob, s.compression_ratio, text[:40]))
-            continue
+
+    def transcribe(clip_list, temps, base, span):
+        seg_iter, _ = model.transcribe(
+            audio, language=a.lang, beam_size=5, word_timestamps=True, temperature=temps,
+            condition_on_previous_text=False, vad_filter=False, clip_timestamps=[x for c in clip_list for x in c],
+        )
+        kept, rejected, n = [], [], 0
+        for s in seg_iter:
+            n += 1
+            progress(base + span * min(1.0, s.end / total))
+            if keep_segment(s):
+                kept.append(s)
+            else:
+                rejected.append((float(s.start), float(s.end)))
+                log("drop %.1f-%.1f (nsp %.2f lp %.2f cr %.2f): %s" % (s.start, s.end, s.no_speech_prob, s.avg_logprob, s.compression_ratio, (s.text or "").strip()[:40]))
+        return kept, rejected, n
+
+    kept, rejected, raw = transcribe(clips, [0.0, 0.3, 0.6], 8, 46)
+    # windows Whisper turned into moans/hallucinations may still hold dialogue: retry them once from a shifted start
+    retry = []
+    for s, e in sorted(rejected):
+        if retry and s - retry[-1][1] < 1.0:
+            retry[-1][1] = max(retry[-1][1], e)
+        else:
+            retry.append([s, e])
+    retry = [[s + 2.0, e] for s, e in retry if e - s >= 6.0]
+    if retry:
+        log("retrying %d rejected span(s)" % len(retry))
+        covered = [(float(s.start), float(s.end)) for s in kept]
+        kept2, _, _ = transcribe(retry, [0.2, 0.5], 54, 6)
+        for s in kept2:
+            if not any(min(e, s.end) - max(b, s.start) > 0.3 for b, e in covered):
+                kept.append(s)
+        kept.sort(key=lambda s: s.start)
+    words, spans = [], []
+    for s in kept:
         spans.append((float(s.start), float(s.end)))
         for w in s.words:
             if w.word.strip():
                 words.append({"start": float(w.start), "end": float(w.end), "word": w.word, "spk": ""})
-    log("segments %d, dropped %d, words %d" % (raw, dropped, len(words)))
+    words.sort(key=lambda w: w["start"])
+    log("segments %d, rejected %d, kept %d, words %d" % (raw, len(rejected), len(kept), len(words)))
     del model; gc.collect()
     if device == "cuda":
         torch.cuda.empty_cache()
