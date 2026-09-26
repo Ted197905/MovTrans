@@ -113,7 +113,14 @@ def main():
     sounds = data.get("sounds") or []
     screen = []
     if a.screen and os.path.isfile(a.screen):
-        screen = [x for x in json.load(open(a.screen, encoding="utf-8")) if x.get("text")]
+        for x in sorted(json.load(open(a.screen, encoding="utf-8")), key=lambda x: (x["start"], x.get("text", ""))):
+            if not x.get("text"):
+                continue
+            prev = next((m for m in reversed(screen[-8:]) if m["text"] == x["text"] and x["start"] - m["end"] <= 4.0), None)
+            if prev:
+                prev["end"] = max(prev["end"], x["end"])
+            else:
+                screen.append(dict(x))
     # a burned-in subtitle carries the line already: the ASR cue under it is dropped, the subtitle is translated instead
     subs_iv = [(x["start"], x["end"]) for x in screen if x["type"] == "subtitle"]
     if subs_iv:
