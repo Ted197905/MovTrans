@@ -72,7 +72,7 @@ window.MT = (() => {
         }
         r.set(100, '등록 중...');
         const fin = await post(base + 'api/upload/finish', { uploadId, total });
-        r.done('완료 - 진행 보기', fin.url);
+        r.done('업로드 완료', fin.url);
         setTimeout(() => location.reload(), 1500);
       } catch (e) {
         r.fail(e.message);

@@ -4,7 +4,6 @@ namespace App\Controllers;
 
 use App\Libraries\Ffmpeg;
 use App\Libraries\Storage;
-use App\Models\JobModel;
 use App\Models\VideoModel;
 
 /**
@@ -107,6 +106,7 @@ class Upload extends BaseController
             'size'     => (int) $meta['size'],
             'lang'     => $meta['lang'],
             'rating'   => $meta['rating'] ?? 'rated',
+            'status'   => 'uploaded',
         ]);
         $mdir = VideoModel::dir($id);
         if (! is_dir($mdir) && ! mkdir($mdir, 0775, true)) {
@@ -131,7 +131,6 @@ class Upload extends BaseController
         $videos->update($id, [
             'duration' => $info['duration'], 'width' => $info['width'], 'height' => $info['height'], 'vcodec' => $info['vcodec'],
         ]);
-        (new JobModel())->insert(['video_id' => $id]);
         return $this->response->setJSON(['ok' => true, 'id' => $id, 'url' => site_url('videos/' . $id)]);
     }
 

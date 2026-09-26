@@ -38,7 +38,7 @@ input, select { display:block; width:100%; margin-top:4px; padding:8px 10px; fon
 .list { width:100%; border-collapse:collapse; font-size:14px; }
 .list th, .list td { text-align:left; padding:8px 6px; border-bottom:1px solid var(--line); }
 .list th { color:var(--muted); font-weight:500; font-size:13px; }
-.actions { text-align:right; }
+.actions { text-align:right; white-space:nowrap; } .actions form { display:inline; margin-left:12px; }
 .status { color:var(--muted); font-size:13px; }
 .status.done { color:var(--ok); } .status.failed { color:var(--danger); } .status.processing { color:var(--accent); }
 .stages { margin:16px 0; }

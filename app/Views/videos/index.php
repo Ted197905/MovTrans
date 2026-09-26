@@ -39,8 +39,19 @@
         <td><?= esc($v['lang']) ?></td>
         <td><?= esc(strtoupper($v['rating'] ?? 'rated')) ?></td>
         <td><?= $v['duration'] ? gmdate((float) $v['duration'] >= 3600 ? 'G:i:s' : 'i:s', (int) $v['duration']) : '-' ?></td>
-        <td><span class="status <?= esc($v['status']) ?>"><?= esc($v['status']) ?><?= $j && $j['status'] === 'running' ? ' / ' . esc($j['stage']) . ' ' . (int) $j['progress'] . '%' : '' ?></span></td>
+        <td><span class="status <?= esc($v['status']) ?>"><?php
+          switch ($v['status']) {
+              case 'uploaded':   echo '업로드 완료'; break;
+              case 'queued':     echo '대기' . ($v['queuePos'] ? ' ' . $v['queuePos'] . '번째' : ''); break;
+              case 'processing': echo '진행 중' . ($j && $j['status'] === 'running' ? ' / ' . esc($j['stage']) . ' ' . (int) $j['progress'] . '%' : ''); break;
+              case 'done':       echo '완료'; break;
+              case 'failed':     echo '실패'; break;
+              default:           echo esc($v['status']);
+          } ?></span></td>
         <td class="actions">
+          <?php if (in_array($v['status'], ['uploaded', 'failed'], true)): ?>
+          <form method="post" action="<?= site_url('videos/' . $v['id'] . '/start') ?>"><?= csrf_field() ?><button class="linkbtn" type="submit">진행</button></form>
+          <?php endif ?>
           <form method="post" action="<?= site_url('videos/' . $v['id'] . '/delete') ?>" onsubmit="return confirm('삭제할까요?')"><?= csrf_field() ?><button class="linkbtn danger" type="submit">삭제</button></form>
         </td>
       </tr>

@@ -16,6 +16,7 @@ $routes->group('', ['filter' => 'auth'], static function (RouteCollection $route
     $routes->get('videos/(:num)', 'Videos::show/$1');
     $routes->post('videos/(:num)/delete', 'Videos::delete/$1');
     $routes->post('videos/(:num)/rerun', 'Videos::rerun/$1');
+    $routes->post('videos/(:num)/start', 'Videos::start/$1');
 
     $routes->post('api/upload/init', 'Upload::init');
     $routes->post('api/upload/chunk', 'Upload::chunk');

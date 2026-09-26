@@ -14,8 +14,11 @@ class Videos extends BaseController
         $videos = new VideoModel();
         $jobs   = new JobModel();
         $rows   = $videos->orderBy('id', 'DESC')->findAll();
+        $queued = array_column($jobs->select('id')->where('status', 'queued')->orderBy('id', 'ASC')->findAll(), 'id');
         foreach ($rows as &$r) {
             $r['job'] = $jobs->latestFor((int) $r['id']);
+            $pos = $r['job'] && $r['job']['status'] === 'queued' ? array_search($r['job']['id'], $queued) : false;
+            $r['queuePos'] = $pos === false ? null : $pos + 1;
         }
         return view('videos/index', ['title' => '영상', 'videos' => $rows, 'langs' => self::LANGS, 'ratings' => self::RATINGS]);
     }
@@ -44,11 +47,22 @@ class Videos extends BaseController
         return redirect()->to('/videos');
     }
 
-    /** Queue a fresh pipeline run (keeps the source file, drops generated outputs). */
+    /** POST /videos/{id}/start: add to the job queue with the stored language/rating. */
+    public function start(int $id)
+    {
+        $video = (new VideoModel())->find($id) ?? throw PageNotFoundException::forPageNotFound();
+        $this->enqueue($video);
+        return redirect()->back();
+    }
+
+    /** Queue a fresh pipeline run, optionally changing language/rating. */
     public function rerun(int $id)
     {
         $videos = new VideoModel();
         $video  = $videos->find($id) ?? throw PageNotFoundException::forPageNotFound();
+        if (in_array($video['status'], ['queued', 'processing'], true)) {
+            return redirect()->to('/videos/' . $id);
+        }
         $lang   = (string) $this->request->getPost('lang');
         if (isset(self::LANGS[$lang])) {
             $videos->update($id, ['lang' => $lang]);
@@ -57,14 +71,22 @@ class Videos extends BaseController
         if (isset(self::RATINGS[$rating])) {
             $videos->update($id, ['rating' => $rating]);
         }
+        $this->enqueue($video);
+        return redirect()->to('/videos/' . $id);
+    }
+
+    /** Drop generated outputs (source is kept) and add a queued job. No-op while queued/running. */
+    private function enqueue(array $video): void
+    {
+        if (in_array($video['status'], ['queued', 'processing'], true)) return;
+        $id  = (int) $video['id'];
         $dir = VideoModel::dir($id);
         foreach (['audio.wav', 'segments.json', 'scenes.json', 'orig.srt', 'orig.vtt', 'ko.srt', 'ko.vtt'] as $f) {
             @unlink($dir . '/' . $f);
         }
         Storage::removeDir($dir . '/frames');
-        $videos->update($id, ['status' => 'queued']);
+        (new VideoModel())->update($id, ['status' => 'queued']);
         (new JobModel())->insert(['video_id' => $id]);
-        return redirect()->to('/videos/' . $id);
     }
 
     /** Translation explicitness (passed to bin/translate.py --rating). */

@@ -53,7 +53,7 @@ $hasOrig = in_array(['orig', 'vtt'], $subtitles, true);
 </div>
 
 <div class="card">
-  <h1>다시 실행</h1>
+  <h1><?= $video['status'] === 'uploaded' ? '진행' : '다시 실행' ?></h1>
   <form method="post" action="<?= site_url('videos/' . $video['id'] . '/rerun') ?>" class="row">
     <?= csrf_field() ?>
     <label>원어
@@ -70,7 +70,7 @@ $hasOrig = in_array(['orig', 'vtt'], $subtitles, true);
         <?php endforeach ?>
       </select>
     </label>
-    <button class="btn" type="submit" <?= $video['status'] === 'processing' ? 'disabled' : '' ?>>파이프라인 다시 실행</button>
+    <button class="btn" type="submit" <?= in_array($video['status'], ['queued', 'processing'], true) ? 'disabled' : '' ?>><?= $video['status'] === 'uploaded' ? '진행' : '파이프라인 다시 실행' ?></button>
   </form>
 </div>
 <?= $this->endSection() ?>
