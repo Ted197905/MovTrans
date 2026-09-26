@@ -24,7 +24,8 @@ from subs import log, ollama_chat, ollama_unload, progress, strip_think, write_s
 BATCH = 25
 LOOKAHEAD = 4
 FOREIGN = re.compile(r"[぀-ヿ一-鿿฀-๿Ѐ-ӿ]")  # kana, CJK ideographs, Thai, Cyrillic
-NUMBERED = re.compile(r"^\s*(\d{1,3})\s*[.):]\s*(?:\[[^\]]{1,6}\]\s*)?(.*?)\s*$")
+# "12. text", tolerating leaked speaker tags: "12. [F] text", "12. F. text", "12. (M1) text", "12. F: text"
+NUMBERED = re.compile(r"^\s*(\d{1,3})\s*[.):]\s*(?:[\[(]?[FM?]\d?[\])]?\s*[.:\-]?\s*)?(.*?)\s*$")
 
 RATING = {
     "rated": "Content level: RATED, like a US theatrical release. Keep the meaning, insults and innuendo, but phrase "
