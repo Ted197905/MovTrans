@@ -26,7 +26,7 @@ LOOKAHEAD = 3
 POLISH_BATCH = 40
 FOREIGN = re.compile(r"[぀-ヿ一-鿿฀-๿Ѐ-ӿ]")  # kana, CJK ideographs, Thai, Cyrillic
 # "12. text", tolerating leaked speaker tags: "12. [F] text", "12. F. text", "12. (M1) text", "12. F: text"
-NUMBERED = re.compile(r"^\s*(\d{1,3})\s*[.):]\s*(?:[\[(]?(?:[FM?]\d?|SUB|TXT)[\])]?\s*[.:\-]?\s*)?(.*?)\s*$")
+NUMBERED = re.compile(r"^\s*(\d{1,3})\s*[.):]\s*(?:[\[(]?(?:[FM?]\d?|S\d{1,2}|SUB|TXT)[\])]?\s*[.:\-]?\s*)?(.*?)\s*$")
 
 RATING = {
     "rated": "Content level: RATED, like a US theatrical release. Keep the meaning, insults and innuendo, but phrase "
@@ -41,8 +41,9 @@ SYSTEM = (
     "actually say the line in that situation: natural spoken Korean, not textbook translation. Match each "
     "speaker's personality, mood and relationship; keep every speaker's speech level (반말/존댓말) and the way "
     "they address each other consistent for the whole video, as fixed in the style guide. Different speakers "
-    "must not sound like one narrator. Speaker tags: [F]/[M] female/male voice (a number tells same-sex speakers "
-    "apart), [?] unknown, [SUB] a subtitle burned into the picture (translate it as the line), [TXT] an on-screen "
+    "must not sound like one narrator. Speaker tags: [S1], [S2]... one diarized voice each (the style guide says "
+    "who they are); [F]/[M]/[?] female/male/unknown by voice pitch when there was no diarization; [SUB] a subtitle "
+    "burned into the picture (translate it as the line), [TXT] an on-screen "
     "caption such as a title, place, date or time (translate it as a caption, not as speech). A line that is "
     "narration (explaining the story to the viewer rather than spoken to someone in the scene) uses the narration "
     "style fixed in the style guide, whatever its tag. Short lines stay short; interjections become the Korean interjection a "
@@ -53,9 +54,10 @@ SYSTEM = (
 )
 
 BIBLE_PROMPT = (
-    "Below is the dialogue script of a video ({lang}), sampled in order. Speaker tags come from voice pitch only: "
-    "F = a female voice, M = a male voice, ? = unknown. Several different people can hide behind the same tag "
-    "(e.g. a husband, a doctor and an interviewer are all [M]); work out who is who from what is said. "
+    "Below is the dialogue script of a video ({lang}), sampled in order. Speaker tags: [S1], [S2], ... are voice "
+    "clusters from speaker diarization (normally one person each; the voice list gives a pitch hint), or F/M/? = "
+    "female/male/unknown by voice pitch only when no diarization ran (then several people can share a tag). Work "
+    "out who each tag is from what is said and how they are addressed.\n\nVoices:\n{cast}\n\n"
     "[SUB] = subtitle burned into the picture, [TXT] = on-screen caption (titles, place/time, narration).\n\n"
     "Script:\n{script}\n\n"
     "An automatic scene description is attached for atmosphere only; it is often wrong about people and roles, "
@@ -147,6 +149,9 @@ def main():
     summary = sc.get("summary") or "(none)"
     scenes = sc.get("scenes") or []
     tag = lambda s: ("[SUB] " if s.get("screen") == "subtitle" else "[TXT] " if s.get("screen") else ("[%s] " % s["spk"]) if s.get("spk") else "")
+    castd = data.get("cast") or {}
+    cast = "\n".join("- [%s]: %d lines, %s voice%s" % (k, v.get("lines", 0), v.get("voice") or {"F": "female", "M": "male"}.get(k[:1], "unknown"),
+                      (" (~%d Hz)" % v["f0"]) if v.get("f0") else "") for k, v in castd.items()) or "(unknown)"
     system = SYSTEM.format(rating=RATING[a.rating])
     os.makedirs(a.out_dir, exist_ok=True)
 
@@ -159,7 +164,7 @@ def main():
     script = "\n".join("%s%s" % (tag(s), s["text"]) for s in segs[::step][:300])
     bible = "(none)"
     try:
-        bible = chat(BIBLE_PROMPT.format(lang=a.lang, summary=summary, script=script)).strip()[:1200]
+        bible = chat(BIBLE_PROMPT.format(lang=a.lang, summary=summary, script=script, cast=cast)).strip()[:1200]
         log("style guide:\n" + bible)
     except Exception as e:
         log("style guide failed: %s" % e)
@@ -245,7 +250,7 @@ def main():
         log("unload failed: %s" % e)
     write_srt(os.path.join(a.out_dir, "ko.srt"), out)
     write_vtt(os.path.join(a.out_dir, "ko.vtt"), out)
-    sdh = build_sdh(out, sounds)
+    sdh = build_sdh(out, sounds, castd)
     write_srt(os.path.join(a.out_dir, "ko.sdh.srt"), sdh)
     write_vtt(os.path.join(a.out_dir, "ko.sdh.vtt"), sdh)
     progress(100)
@@ -255,16 +260,25 @@ SOUND_KO = {"moan": "[신음]", "laugh": "[웃음]"}
 SPK_KO = {"F": "여", "M": "남"}
 
 
-def build_sdh(cues, sounds):
-    """SDH track: speaker labels when the speaker changes, and sound cues where nobody speaks."""
+def build_sdh(cues, sounds, cast=None):
+    """SDH track: a speaker label when the speaker changes (여/남 by voice, 화자N for an unclear diarized voice),
+    and sound cues where nobody speaks."""
+    def label(spk):
+        if spk.startswith("S"):
+            v = (cast or {}).get(spk, {}).get("voice", "")
+            return ("여" if v == "female-sounding" else "남" if v == "male-sounding" else "화자") + spk[1:]
+        if spk[:1] in SPK_KO:
+            return SPK_KO[spk[:1]] + spk[1:]
+        return None
+
     out, last = [], None
     for c in cues:
         t = c["text"]
-        spk = (c.get("spk") or "")[:1]
-        if spk in SPK_KO and spk != last and not c.get("pos"):
-            t = "%s: %s" % (SPK_KO[spk] + (c["spk"][1:] if len(c["spk"]) > 1 else ""), t)
-        if spk in SPK_KO:
-            last = spk
+        lab = label(c.get("spk") or "")
+        if lab and lab != last and not c.get("pos"):
+            t = "%s: %s" % (lab, t)
+        if lab:
+            last = lab
         out.append(dict(c, text=t))
     for snd in sounds:
         if snd["kind"] not in SOUND_KO:

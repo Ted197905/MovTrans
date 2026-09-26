@@ -46,7 +46,8 @@ def main():
         data = json.load(f)
     segs = data["segments"]
     lang = data.get("lang", "")
-    cast = ", ".join("%s (%d lines)" % (k, v.get("lines", 0)) for k, v in (data.get("cast") or {}).items()) or "(none)"
+    cast = ", ".join("%s (%d lines, %s voice)" % (k, v.get("lines", 0), v.get("voice") or {"F": "female", "M": "male"}.get(k[:1], "unknown"))
+                     for k, v in (data.get("cast") or {}).items()) or "(none)"
     if not segs:
         json.dump({"summary": "", "scenes": []}, open(a.out, "w", encoding="utf-8"), ensure_ascii=False)
         progress(100)
@@ -91,7 +92,7 @@ def main():
         try:
             reply = ollama_chat(a.ollama, a.model, [{"role": "user", "content":
                 "These are scene notes from one video, in order:\n" + notes +
-                "\n\nSpeaker tags used in the dialogue (F = female voice, M = male voice): " + cast +
+                "\n\nSpeaker tags used in the dialogue (S1, S2... = diarized voices; F/M = by pitch): " + cast +
                 "\n\nWrite a 4-6 sentence overview in Korean: genre, setting, each speaker tag's person (sex, apparent age, "
                 "role, personality), how they relate and address each other, overall tone, and the speech level "
                 "(banmal/jondaetmal, honorifics) each speaker should use in Korean subtitles. "
