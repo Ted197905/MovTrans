@@ -22,7 +22,7 @@ import time
 from subs import drop_persistent_text, log, ollama_chat, ollama_unload, progress, strip_think, write_srt, write_vtt
 
 BATCH = 25
-LOOKAHEAD = 4
+LOOKAHEAD = 3
 POLISH_BATCH = 40
 FOREIGN = re.compile(r"[぀-ヿ一-鿿฀-๿Ѐ-ӿ]")  # kana, CJK ideographs, Thai, Cyrillic
 # "12. text", tolerating leaked speaker tags: "12. [F] text", "12. F. text", "12. (M1) text", "12. F: text"
@@ -46,20 +46,24 @@ SYSTEM = (
     "caption such as a title, place, date or time (translate it as a caption, not as speech). Short lines stay short; interjections become the Korean interjection a "
     "person would really use. Keep each subtitle readable: at most two lines of about 16 Korean characters. "
     "Every output line must be fully Korean (Hangul); never leave source-language words, romanization or "
-    "other scripts. Never add notes, explanations, speaker tags or brackets. {rating}"
+    "other scripts. Japanese personal names are written by their Japanese reading (神木 -> 카미키), never by the "
+    "Korean reading of the characters. Never add notes, explanations, speaker tags or brackets. {rating}"
 )
 
 BIBLE_PROMPT = (
-    "Below is the overview of a video and its full dialogue script ({lang}). Speaker tags: F = female voice, "
-    "M = male voice, a number tells speakers of the same sex apart, ? = unknown.\n\n"
-    "Overview from an automatic scene analysis (it can be wrong about who is who; the script is the authority):\n"
-    "{summary}\n\nScript (sampled lines in order; [SUB] = subtitle burned into the picture, [TXT] = on-screen caption):\n{script}\n\n"
+    "Below is the dialogue script of a video ({lang}), sampled in order. Speaker tags come from voice pitch only: "
+    "F = a female voice, M = a male voice, ? = unknown. Several different people can hide behind the same tag "
+    "(e.g. a husband, a doctor and an interviewer are all [M]); work out who is who from what is said. "
+    "[SUB] = subtitle burned into the picture, [TXT] = on-screen caption (titles, place/time, narration).\n\n"
+    "Script:\n{script}\n\n"
+    "An automatic scene description is attached for atmosphere only; it is often wrong about people and roles, "
+    "and the script above overrides it:\n{summary}\n\n"
     "Write a concise style guide, in Korean, for translating these subtitles as a Korean subtitler would "
-    "(no more than 350 characters, plain lines, no markdown):\n"
-    "1. 등장인물: 태그별로 누구인지 (이름/호칭이 대사에 나오면 그대로), 성별, 대략 나이, 성격, 역할\n"
+    "(no more than 400 characters, plain lines, no markdown):\n"
+    "1. 등장인물: 실제로 등장하는 사람들 (이름/호칭이 대사에 나오면 그대로), 성별, 대략 나이, 성격, 역할, 어느 태그로 나오는지\n"
     "2. 관계와 말투: 각 인물이 상대에게 쓰는 말투(반말/존댓말/높임), 서로를 부르는 호칭. 영상 전체에서 고정\n"
     "3. 전체 톤과 장르, 번역 시 지킬 점 (표현 수위는 지시대로)\n"
-    "4. 반복되는 고유명사/용어와 그 한국어 표기"
+    "4. 반복되는 고유명사/용어와 그 한국어 표기. 일본 인명은 일본어 읽기(예: 神木 -> 카미키, 麗 -> 레이)로 적고 한자 음독(신목)은 쓰지 않는다"
 )
 
 POLISH = (
@@ -169,10 +173,11 @@ def main():
     for b, batch in enumerate(batches):
         lo = b * BATCH; hi = lo + len(batch)
         notes = [s["desc"] for s in scenes if lo <= s["idx"] < hi] or [s["desc"] for s in scenes if s["idx"] < hi][-2:]
+        notes = [n[:140] for n in notes[:: max(1, len(notes) // 5)][:6]]  # prompt size drives CPU prefill time
         lines = "\n".join("%d. %s%s" % (k + 1, tag(s), s["text"]) for k, s in enumerate(batch))
         ahead = "\n".join("%s%s" % (tag(s), s["text"]) for s in segs[hi:hi + LOOKAHEAD]) or "(end)"
         user = USER.format(bible=bible, scenes="\n".join("- " + x for x in notes) or "(none)",
-                           prev="\n".join(prev[-8:]) or "(start of video)", ahead=ahead, n=len(batch), lang=a.lang, lines=lines)
+                           prev="\n".join(prev[-6:]) or "(start of video)", ahead=ahead, n=len(batch), lang=a.lang, lines=lines)
         got = {}
         for attempt in range(3):
             if attempt:
@@ -210,7 +215,7 @@ def main():
         for i in range(0, len(out), POLISH_BATCH):
             chunk = out[i:i + POLISH_BATCH]
             src = segs[i:i + POLISH_BATCH]
-            notes = [s["desc"] for s in scenes if i <= s["idx"] < i + POLISH_BATCH][:12]
+            notes = [n["desc"][:140] for n in [s for s in scenes if i <= s["idx"] < i + POLISH_BATCH][::3][:6]]
             pairs = "\n".join("%d. %s%s => %s" % (k + 1, tag(s), s["text"], c["text"]) for k, (s, c) in enumerate(zip(src, chunk)))
             try:
                 got = parse_numbered(chat(POLISH.format(bible=bible, scenes="\n".join("- " + x for x in notes) or "(none)",
