@@ -159,7 +159,7 @@ def main():
         else:
             if cur:
                 intervals.append(cur)
-            cur = {"start": i, "end": i + 1, "boxes": boxes, "area": (mb[1] - mb[0]) * (mb[3] - mb[2])}
+            cur = {"start": i, "end": i + 1, "boxes": boxes, "area": (mb[1] - mb[0]) * (mb[3] - mb[2]), "sig": sig}
         prev_sig = sig
     if cur:
         intervals.append(cur)
@@ -171,8 +171,21 @@ def main():
 
     out = []
     logo_boxes = []  # positions the model already classified as logo/sign/ui: skip identical ones
+    read = []        # (main box, signature, items) of intervals already read: the same text again is not re-read
     for k, iv in enumerate(intervals):
         if iv["boxes"] and all(any(iou(b, lb) > 0.5 for lb in logo_boxes) for b in iv["boxes"]):
+            continue
+        mb = main_box(iv["boxes"])
+        again = None
+        for rb, rsig, ritems in read[-40:]:
+            if iou(rb, mb) > 0.6 and iv.get("sig") is not None and rsig is not None and iv["sig"].shape == rsig.shape \
+                    and float(np.mean(np.abs(iv["sig"] - rsig))) < 12.0:
+                again = ritems
+                break
+        if again is not None:
+            for it in again:
+                out.append({"start": float(iv["start"]), "end": float(iv["end"]), "type": it["type"],
+                            "text": it["text"].strip(), "ko": (it.get("ko") or "").strip()})
             continue
         t = (iv["start"] + iv["end"]) / 2.0
         frame = os.path.join(a.work, "read.jpg")
@@ -191,12 +204,23 @@ def main():
                 and not URLISH.search(it["text"])]
         if items and not kept:
             logo_boxes += [b for b in iv["boxes"] if not any(iou(b, lb) > 0.5 for lb in logo_boxes)]
+        read.append((mb, iv.get("sig"), kept))
         for it in kept:
             out.append({"start": float(iv["start"]), "end": float(iv["end"]), "type": it["type"],
                         "text": it["text"].strip(), "ko": (it.get("ko") or "").strip()})
             log("%s %d-%ds: %s -> %s" % (it["type"], iv["start"], iv["end"], it["text"][:40], (it.get("ko") or "")[:40]))
         progress(55 + 44 * (k + 1) / max(1, len(intervals)))
     shutil.rmtree(frames_dir, ignore_errors=True)
+    # the same text read again within a few seconds is one cue
+    out.sort(key=lambda x: (x["start"], x["text"]))
+    merged = []
+    for x in out:
+        prev = next((m for m in reversed(merged[-8:]) if m["text"] == x["text"] and x["start"] - m["end"] <= 4.0), None)
+        if prev:
+            prev["end"] = max(prev["end"], x["end"])
+        else:
+            merged.append(x)
+    out = merged
     with open(a.out, "w", encoding="utf-8") as f:
         json.dump(out, f, ensure_ascii=False, indent=1)
     log("%d on-screen text cue(s)" % len(out))
