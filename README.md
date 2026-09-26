@@ -9,8 +9,9 @@
 2. 워커 `php spark worker:run` 이 `jobs` 를 2초마다 폴링해 단계별로 실행
    - `prepare`    ffmpeg 16 kHz 오디오 추출 + 모든 영상을 H.264/AAC 프록시(최대 1080p)로 재인코딩
    - `transcribe` `bin/transcribe.py` faster-whisper large-v3 를 발화 시작점 기준 30초 클립으로 실행, 환각/신음 필터,
-                  걸러진 창 재시도, 빈 구간은 kotoba-whisper 로 보충(+wav2vec2 정렬), 피치 기반 F/M 화자 태그,
-                  단어 타임스탬프로 자막 큐 재구성 -> `segments.json`(cast, sounds 포함), `orig.srt/vtt`
+                  걸러진 창 재시도, 빈 구간은 kotoba-whisper 로 보충(+wav2vec2 정렬), 화자 분리(NVIDIA Sortformer 주,
+                  pyannote 교차검증, 둘 다 없으면 피치 F/M) -> 태그 S1..Sn + 음높이 힌트, 단어 타임스탬프로 자막 큐 재구성
+                  -> `segments.json`(cast, sounds 포함), `orig.srt/vtt`
    - `scene`      `bin/scene.py` 큐마다 프레임 1장을 Qwen3-VL(Ollama)로 분석 + 영상 개요 -> `scenes.json`
    - `screen`     `bin/ocr.py` 1fps EasyOCR 검출 -> Qwen3-VL 판독: 화면 속 자막/캡션만 -> `screen.json` (실패해도 잡은 계속)
    - `translate`  `bin/translate.py` 스타일 가이드(등장인물/말투) 생성 -> 25줄 배치 번역(장면 노트, 앞뒤 문맥) -> 재번역
@@ -89,6 +90,16 @@ venv/bin/python -c "import torch, whisperx, easyocr; print(torch.cuda.is_availab
 ```
 
 모델 캐시(HF: faster-whisper-large-v3, kotoba-whisper, wav2vec2-ja 정렬; EasyOCR 검출 모델)는 워커 HOME 인 `writable/.cache` 에 첫 잡에서 받아진다.
+
+### 화자 분리
+
+```bash
+# NVIDIA Sortformer (주): 별도 venv, nvidia/diar_streaming_sortformer_4spk-v2 (CC-BY-4.0, 약관 동의 불필요)
+bin/uv venv --python 3.12 nemo && bin/uv pip install --python nemo/bin/python Cython packaging "nemo_toolkit[asr]"
+# pyannote 3.1 (교차검증): HF 계정에서 pyannote/segmentation-3.0, speaker-diarization-3.1, speaker-diarization-community-1 약관 동의 후
+# 읽기 토큰을 .env 에: movtrans.hfToken = hf_...
+```
+`.env` `movtrans.diarizer` = both(기본) | auto | sortformer | pyannote | pitch. 잡 로그에 두 결과의 단어 단위 일치율이 남는다.
 
 `.env`: `movtrans.python = /var/www/movtrans/pyenv/venv/bin/python` (pylibs 폴더가 없으면 PYTHONPATH 는 설정되지 않는다).
 
