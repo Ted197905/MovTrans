@@ -175,7 +175,8 @@ def main():
     log("model %s, rating %s, %d lines in %d batches" % (a.model, a.rating, len(segs), len(batches)))
     for b, batch in enumerate(batches):
         lo = b * BATCH; hi = lo + len(batch)
-        notes = [s["desc"] for s in scenes if lo <= s["idx"] < hi] or [s["desc"] for s in scenes if s["idx"] < hi][-2:]
+        t0, t1 = batch[0]["start"], batch[-1]["end"]  # scene notes by time (screen cues shift the line indices)
+        notes = [s["desc"] for s in scenes if t0 - 10 <= s["t"] <= t1 + 10] or [s["desc"] for s in scenes if s["t"] < t1][-2:]
         notes = [n[:140] for n in notes[:: max(1, len(notes) // 5)][:6]]  # prompt size drives CPU prefill time
         lines = "\n".join("%d. %s%s" % (k + 1, tag(s), s["text"]) for k, s in enumerate(batch))
         ahead = "\n".join("%s%s" % (tag(s), s["text"]) for s in segs[hi:hi + LOOKAHEAD]) or "(end)"
@@ -218,7 +219,8 @@ def main():
         for i in range(0, len(out), POLISH_BATCH):
             chunk = out[i:i + POLISH_BATCH]
             src = segs[i:i + POLISH_BATCH]
-            notes = [n["desc"][:140] for n in [s for s in scenes if i <= s["idx"] < i + POLISH_BATCH][::3][:6]]
+            t0, t1 = chunk[0]["start"], chunk[-1]["end"]
+            notes = [n["desc"][:140] for n in [s for s in scenes if t0 - 10 <= s["t"] <= t1 + 10][::3][:6]]
             pairs = "\n".join("%d. %s%s => %s" % (k + 1, tag(s), s["text"], c["text"]) for k, (s, c) in enumerate(zip(src, chunk)))
             try:
                 got = parse_numbered(chat(POLISH.format(bible=bible, scenes="\n".join("- " + x for x in notes) or "(none)",
