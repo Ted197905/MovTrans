@@ -103,6 +103,23 @@ def pitch_hz(audio, start, end):
     return float(np.median(f0)) if len(f0) >= 5 else None
 
 
+def voice_hint(audio, cues):
+    """Pitch hint for a diarized speaker from the F0 frames of its cues. The share of low frames (< 160 Hz) is
+    used instead of a median: a man's cues often carry the woman's higher voice underneath, which drags a
+    median up, while a woman's cues rarely contain many low frames."""
+    mine = [c for c in cues if c["end"] - c["start"] >= 0.6]
+    f0 = []
+    for c in mine[:: max(1, len(mine) // 120)]:
+        _, f = yin_f0(audio[int(c["start"] * SR):int(c["end"] * SR)])
+        f0.extend(f.tolist())
+    if len(f0) < 20:
+        return {"f0": None, "voice": "unclear"}
+    f0 = np.array(f0)
+    low = float((f0 < 160).mean())
+    return {"f0": int(np.median(f0)), "low_share": round(low, 2),
+            "voice": "male-sounding" if low > 0.4 else "female-sounding" if low < 0.25 else "ambiguous"}
+
+
 def gender(f0):
     return "?" if f0 is None else ("F" if f0 >= 165 else "M")
 
@@ -579,13 +596,9 @@ def main():
         cues = build_cues(words, a.lang)
     for c in cues:
         cast.setdefault(c["spk"], {"lines": 0, "f0": None})["lines"] += 1
-    if turns:  # voice pitch per diarized speaker, measured on whole cues (single words are too short for F0)
+    if turns:
         for spk, info in cast.items():
-            mine = [c for c in cues if c["spk"] == spk and c["end"] - c["start"] >= 0.6]
-            f0s = [f for f in (pitch_hz(audio, c["start"], c["end"]) for c in mine[:: max(1, len(mine) // 80)]) if f]
-            f0 = float(np.median(f0s)) if len(f0s) >= 3 else None
-            info["f0"] = round(f0) if f0 else None
-            info["voice"] = "unclear" if f0 is None else "male-sounding" if f0 < 150 else "female-sounding" if f0 > 200 else "ambiguous"
+            info.update(voice_hint(audio, [c for c in cues if c["spk"] == spk]))
     progress(95)
 
     segs = [{"start": round(c["start"], 3), "end": round(c["end"], 3), "text": c["text"], "spk": c["spk"]} for c in cues]
