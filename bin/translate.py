@@ -26,7 +26,7 @@ LOOKAHEAD = 3
 POLISH_BATCH = 40
 FOREIGN = re.compile(r"[぀-ヿ一-鿿฀-๿Ѐ-ӿ]")  # kana, CJK ideographs, Thai, Cyrillic
 # "12. text", tolerating leaked speaker tags: "12. [F] text", "12. F. text", "12. (M1) text", "12. F: text"
-NUMBERED = re.compile(r"^\s*(\d{1,3})\s*[.):]\s*(?:[\[(]?(?:[FM?]\d?|S\d{1,2}|SUB|TXT)[\])]?\s*[.:\-]?\s*)?(.*?)\s*$")
+NUMBERED = re.compile(r"^\s*(\d{1,3})\s*[.):]\s*(?:[\[(]?(?:[FM?]\d?|S\d{1,2}(?:/NAR)?|SUB|TXT)[\])]?\s*[.:\-]?\s*)?(.*?)\s*$")
 
 RATING = {
     "rated": "Content level: RATED, like a US theatrical release. Keep the meaning, insults and innuendo, but phrase "
@@ -46,8 +46,8 @@ SYSTEM = (
     "burned into the picture (translate it as the line), [TXT] an on-screen "
     "caption such as a title, place, date or time (translate it as a caption, not as speech). A line that is "
     "narration (explaining the story to the viewer rather than spoken to someone in the scene, typically the "
-    "narrator tag named in the style guide) is always written in Korean documentary narration style: polite formal "
-    "endings (-습니다/-입니다/-했습니다), never casual 반말 endings. Short lines stay short; interjections become the Korean interjection a "
+    "narrator tag named in the style guide, and every line tagged [Sn/NAR]) is always written in Korean documentary "
+    "narration style: polite formal endings (-습니다/-입니다/-했습니다), never casual 반말 endings. Short lines stay short; interjections become the Korean interjection a "
     "person would really use. Keep each subtitle readable: at most two lines of about 16 Korean characters. "
     "Every output line must be fully Korean (Hangul); never leave source-language words, romanization or "
     "other scripts. Japanese personal names are written by their Japanese reading, never by the Korean reading "
@@ -150,10 +150,18 @@ def main():
     sc = json.load(open(a.scenes, encoding="utf-8"))
     summary = sc.get("summary") or "(none)"
     scenes = sc.get("scenes") or []
-    tag = lambda s: ("[SUB] " if s.get("screen") == "subtitle" else "[TXT] " if s.get("screen") else ("[%s] " % s["spk"]) if s.get("spk") else "")
+    tag = lambda s: ("[SUB] " if s.get("screen") == "subtitle" else "[TXT] " if s.get("screen") else
+                     ("[%s/NAR] " % s["spk"]) if s.get("spk") in narr_tags else ("[%s] " % s["spk"]) if s.get("spk") else "")
     castd = data.get("cast") or {}
-    cast = "\n".join("- [%s]: %d lines, %s voice%s" % (k, v.get("lines", 0), v.get("voice") or {"F": "female", "M": "male"}.get(k[:1], "unknown"),
-                      (" (~%d Hz)" % v["f0"]) if v.get("f0") else "") for k, v in castd.items()) or "(unknown)"
+    for k, v in castd.items():  # a narrator speaks in long, formal, declarative sentences (Japanese -ます/-です)
+        mine = [s["text"] for s in segs if s.get("spk") == k and not s.get("screen")]
+        formal = sum(1 for t in mine if re.search(r"(ます|です|ました|でした|ています|ません)[。.!?！？]?$", t))
+        v["narration"] = len(mine) >= 20 and formal / len(mine) > 0.45 and sum(map(len, mine)) / len(mine) > 14
+    cast = "\n".join("- [%s]: %d lines, %s voice%s%s" % (k, v.get("lines", 0), v.get("voice") or {"F": "female", "M": "male"}.get(k[:1], "unknown"),
+                      (" (~%d Hz)" % v["f0"]) if v.get("f0") else "",
+                      " - long formal declarative lines: most likely the NARRATOR" if v.get("narration") else "")
+                      for k, v in castd.items()) or "(unknown)"
+    narr_tags = [k for k, v in castd.items() if v.get("narration")]
     system = SYSTEM.format(rating=RATING[a.rating])
     os.makedirs(a.out_dir, exist_ok=True)
 
@@ -266,6 +274,8 @@ def build_sdh(cues, sounds, cast=None):
     """SDH track: a speaker label when the speaker changes (여/남 by voice, 화자N for an unclear diarized voice),
     and sound cues where nobody speaks."""
     def label(spk):
+        if (cast or {}).get(spk, {}).get("narration"):
+            return "내레이션"
         if spk.startswith("S"):
             v = (cast or {}).get(spk, {}).get("voice", "")
             return ("여" if v == "female-sounding" else "남" if v == "male-sounding" else "화자") + spk[1:]
