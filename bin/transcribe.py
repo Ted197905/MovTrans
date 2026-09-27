@@ -32,7 +32,7 @@ NO_SPACE_LANGS = {"ja", "zh", "th"}
 # Whole-segment phrases Whisper emits on silence, music or moaning (credits/outro training data).
 HALLUCINATIONS = [
     "ご視聴ありがとうございました", "ご視聴ありがとうございます", "チャンネル登録", "高評価", "最後までご視聴",
-    "字幕", "おやすみなさい", "また次の動画で", "次の動画", "お会いしましょう", "バイバイ", "ご視聴", "開封して", "お疲れ様でした",
+    "字幕", "おやすみなさい", "また次の動画で", "次の動画", "お会いしましょう", "ご視聴", "開封して", "お疲れ様でした",
     "thank you for watching", "thanks for watching", "subtitles by", "subscribe", "like and subscribe",
     "please subscribe", "see you in the next video", "copyright", "amara.org",
     "시청해 주셔서 감사합니다", "구독", "좋아요", "谢谢观看", "感谢观看", "请订阅", "字幕由",
