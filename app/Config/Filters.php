@@ -34,7 +34,8 @@ class Filters extends BaseFilters
     ];
 
     public array $globals = [
-        'before' => ['csrf'],
+        // auth before csrf: an expired session goes to the login page instead of failing the CSRF check
+        'before' => ['auth' => ['except' => ['login']], 'csrf'],
         'after'  => [],
     ];
 

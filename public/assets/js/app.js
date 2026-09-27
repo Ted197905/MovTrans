@@ -6,11 +6,13 @@ window.MT = (() => {
   const base = document.querySelector('.brand').getAttribute('href').replace(/videos$/, '');
   const fmtSize = b => b >= 1073741824 ? (b / 1073741824).toFixed(2) + ' GB' : (b / 1048576).toFixed(1) + ' MB';
   const httpError = s => s === 401 ? '로그인이 필요합니다' : s === 413 ? '파일이 너무 큽니다' : 'HTTP ' + s;
+  const toLogin = () => { location.href = base + 'login'; };
 
   async function post(url, body) {
     const t = csrf();
     const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest', ...(t ? { 'X-CSRF-TOKEN': t.hash } : {}) }, body: JSON.stringify(body) });
     let j = {}; try { j = await res.json(); } catch (e) {}
+    if (res.status === 401) toLogin();
     if (!res.ok || j.error) throw new Error(j.error || httpError(res.status));
     return j;
   }
@@ -23,6 +25,7 @@ window.MT = (() => {
       xhr.upload.onprogress = e => { if (e.lengthComputable) onProgress(e.loaded); };
       xhr.onload = () => {
         let j = {}; try { j = JSON.parse(xhr.responseText); } catch (e) {}
+        if (xhr.status === 401) toLogin();
         (xhr.status === 200 && j.ok) ? resolve(j) : reject(new Error(j.error || httpError(xhr.status)));
       };
       xhr.onerror = () => reject(new Error('네트워크 오류'));
@@ -106,6 +109,7 @@ window.MT = (() => {
     const tick = async () => {
       try {
         const res = await fetch(base + 'api/videos/status', { headers: { 'X-Requested-With': 'XMLHttpRequest' } });
+        if (res.status === 401) { toLogin(); return; }
         if (!res.ok) throw new Error(httpError(res.status));
         let finished = false;
         for (const v of await res.json()) {
@@ -146,6 +150,7 @@ window.MT = (() => {
     const tick = async () => {
       try {
         const res = await fetch(base + 'api/jobs/' + root.dataset.video, { headers: { 'X-Requested-With': 'XMLHttpRequest' } });
+        if (res.status === 401) { toLogin(); return; }
         if (!res.ok) throw new Error(httpError(res.status));
         const j = await res.json();
         render(j.job);
