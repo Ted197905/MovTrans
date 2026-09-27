@@ -24,6 +24,7 @@ import zlib
 import numpy as np
 
 from subs import log, progress, write_srt, write_vtt
+from timing import align_cues, finish_cues, fix_word_spans, peak_db
 
 SR = 16000
 NO_SPACE_LANGS = {"ja", "zh", "th"}
@@ -31,7 +32,7 @@ NO_SPACE_LANGS = {"ja", "zh", "th"}
 # Whole-segment phrases Whisper emits on silence, music or moaning (credits/outro training data).
 HALLUCINATIONS = [
     "ご視聴ありがとうございました", "ご視聴ありがとうございます", "チャンネル登録", "高評価", "最後までご視聴",
-    "字幕", "おやすみなさい", "また次の動画で", "お疲れ様でした",
+    "字幕", "おやすみなさい", "また次の動画で", "次の動画", "お会いしましょう", "バイバイ", "ご視聴", "開封して", "お疲れ様でした",
     "thank you for watching", "thanks for watching", "subtitles by", "subscribe", "like and subscribe",
     "please subscribe", "see you in the next video", "copyright", "amara.org",
     "시청해 주셔서 감사합니다", "구독", "좋아요", "谢谢观看", "感谢观看", "请订阅", "字幕由",
@@ -59,7 +60,7 @@ def is_hallucination(text):
         return True
     for h in HALLUCINATIONS:
         h2 = re.sub(r"[\s']", "", h).lower()
-        if t == h2 or (h2 in t and len(t) <= len(h2) + 4):
+        if t == h2 or (h2 in t and len(t) <= len(h2) + 6):
             return True
     return False
 
@@ -254,6 +255,25 @@ SUSPICIOUS = {"ありがとうございました", "ありがとうございま�
 LAUGH = re.compile(r"(ハハ|はは|ふふ|フフ|笑|haha|hehe|lol)", re.I)
 
 
+PUNCT = re.compile(r"[\s。、．，,.!！?？…・「」\"'()（）\-]")
+
+
+def undouble(words):
+    """A segment that is the same phrase written twice ("お腹いっぱいになったら、お腹いっぱいになったら、") is a
+    decoder stutter: keep the words of the first half."""
+    core = "".join(PUNCT.sub("", w["word"]) for w in words)
+    h = len(core) // 2
+    if len(core) < 8 or len(core) % 2 or core[:h] != core[h:]:
+        return words
+    n, out = 0, []
+    for w in words:
+        out.append(w)
+        n += len(PUNCT.sub("", w["word"]))
+        if n >= h:
+            break
+    return out
+
+
 def sound_kind(text):
     """Non-dialogue vocalisation Whisper wrote down: what an SDH track should show instead."""
     t = re.sub(r"[\s。、．，,.!！?？…・「」\"'()（）\-〜～ー]", "", text).lower()
@@ -313,6 +333,8 @@ def fill_pass(model_name, audio, clip_list, lang, device, compute, total):
         progress(60 + 8 * min(1.0, s.end / total))
         text = (s.text or "").strip()
         if not text or not keep_segment_plain(s) or s.avg_logprob < -0.85:  # a fill line needs to be a confident one
+            continue
+        if peak_db(audio, s.start, s.end) < -55:  # nothing audible there
             continue
         core = re.sub(r"[\s。、．，,.!！?？…]", "", text)
         if core in ("ごめん", "ごめんなさい", "すいません", "すみません") and any(abs(s.start - c) < 0.6 for c in starts):
@@ -441,13 +463,7 @@ def build_cues(words, lang, max_dur=6.0, max_gap=0.7):
             merged[-1]["end"] = c["end"]
         else:
             merged.append(c)
-    cues = merged
-    for c in cues:  # readable minimum duration, without overlapping the next cue
-        c["end"] = max(c["end"], c["start"] + 1.0)
-    for a, b in zip(cues, cues[1:]):
-        if a["end"] > b["start"]:
-            a["end"] = max(a["start"] + 0.3, b["start"] - 0.05)
-    return cues
+    return merged
 
 
 def main():
@@ -489,7 +505,7 @@ def main():
         for s in seg_iter:
             n += 1
             progress(base + span * min(1.0, s.end / total))
-            if keep_segment(s, min_word_prob) and not looping(kept, s):
+            if keep_segment(s, min_word_prob) and not looping(kept, s) and peak_db(audio, s.start, s.end) >= -55:
                 kept.append(s)
             else:
                 rejected.append((float(s.start), float(s.end)))
@@ -522,9 +538,8 @@ def main():
     words, spans = [], []
     for s in kept:
         spans.append((float(s.start), float(s.end)))
-        for w in s.words:
-            if w.word.strip():
-                words.append({"start": float(w.start), "end": float(w.end), "word": w.word, "spk": ""})
+        ws = [{"start": float(w.start), "end": float(w.end), "word": w.word, "spk": ""} for w in s.words if w.word.strip()]
+        words += fix_word_spans(undouble(ws), a.lang)
     log("segments %d, rejected %d, kept %d, words %d" % (raw, len(rejected), len(kept), len(words)))
     del model; gc.collect()
     if device == "cuda":
@@ -594,6 +609,13 @@ def main():
         label_words_by_pitch(audio, words, spans)
         smooth_speakers(words, a.lang)
         cues = build_cues(words, a.lang)
+    # Whisper's word times are rough (a segment's first word absorbs the pause before it, so the cue would appear
+    # while the previous line is still being said): every cue is force-aligned to the audio
+    moved = align_cues(audio, cues, a.lang, device)
+    log("aligned %d of %d cues" % (moved, len(cues)))
+    for c in finish_cues(cues):
+        log("drop duplicate %.1f-%.1f: %s" % (c["start"], c["end"], c["text"][:40]))
+    progress(92)
     for c in cues:
         cast.setdefault(c["spk"], {"lines": 0, "f0": None})["lines"] += 1
     if turns:
