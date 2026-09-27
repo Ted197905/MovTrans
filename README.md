@@ -10,8 +10,8 @@
    - `prepare`    ffmpeg 16 kHz 오디오 추출 + 모든 영상을 H.264/AAC 프록시(최대 1080p)로 재인코딩
    - `transcribe` `bin/transcribe.py` faster-whisper large-v3 를 발화 시작점 기준 30초 클립으로 실행, 환각/신음 필터,
                   걸러진 창 재시도, 빈 구간은 kotoba-whisper 로 보충(+wav2vec2 정렬), 화자 분리(NVIDIA Sortformer 주,
-                  pyannote 교차검증, 둘 다 없으면 피치 F/M) -> 태그 S1..Sn + 음높이 힌트, 단어 타임스탬프로 자막 큐 재구성
-                  -> `segments.json`(cast, sounds 포함), `orig.srt/vtt`
+                  pyannote 교차검증, 둘 다 없으면 피치 F/M) -> 태그 S1..Sn + 음높이 힌트, 단어 타임스탬프로 자막 큐 재구성,
+                  큐마다 wav2vec2 강제 정렬로 시작/끝 보정 (`bin/timing.py`) -> `segments.json`(cast, sounds 포함), `orig.srt/vtt`
    - `scene`      `bin/scene.py` 큐마다 프레임 1장을 Qwen3-VL(Ollama)로 분석 + 영상 개요 -> `scenes.json`
    - `screen`     `bin/ocr.py` 1fps EasyOCR 검출 -> Qwen3-VL 판독: 화면 속 자막/캡션만 -> `screen.json` (실패해도 잡은 계속)
    - `translate`  `bin/translate.py` 스타일 가이드(등장인물/말투) 생성 -> 25줄 배치 번역(장면 노트, 앞뒤 문맥) -> 재번역
@@ -21,6 +21,7 @@
 파일은 `writable/media/{id}/` 에 두고 nginx `X-Accel-Redirect` 로 전송한다.
 Python 스크립트는 stderr 에 `progress 0..100` 을 출력하고, 그 외 stderr 줄은 잡 로그에 쌓인다.
 빈 구간 확인: `pyenv/venv/bin/python bin/audit.py --audio writable/media/N/audio.wav --segments writable/media/N/segments.json`
+기존 결과물 타이밍만 재정렬: `pyenv/venv/bin/python bin/retime.py --dir writable/media/N` (ko/SDH 트랙도 함께 이동)
 
 ## 스택
 

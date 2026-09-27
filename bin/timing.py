@@ -9,8 +9,8 @@ from subs import log
 
 SR = 16000
 LEAD = 0.05   # a cue may appear this long before the first sound of the line
-TAIL = 0.25   # and stay this long after the last one
-MIN_DUR = 1.0
+TAIL = 0.20   # and stay this long after the last one
+MIN_DUR = 0.85  # Netflix-style readable minimum (5/6 s)
 GAP = 0.05    # the next cue never starts before the previous one is gone
 
 
