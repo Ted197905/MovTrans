@@ -153,10 +153,22 @@ def main():
     tag = lambda s: ("[SUB] " if s.get("screen") == "subtitle" else "[TXT] " if s.get("screen") else
                      ("[%s/NAR] " % s["spk"]) if s.get("spk") in narr_tags else ("[%s] " % s["spk"]) if s.get("spk") else "")
     castd = data.get("cast") or {}
-    for k, v in castd.items():  # a narrator speaks in long, formal, declarative sentences (Japanese -ます/-です)
+    for k, v in castd.items():  # ask the model, per voice, whether it is a narrator (formality alone does not tell)
         mine = [s["text"] for s in segs if s.get("spk") == k and not s.get("screen")]
-        formal = sum(1 for t in mine if re.search(r"(ます|です|ました|でした|ています|ません)[。.!?！？]?$", t))
-        v["narration"] = len(mine) >= 20 and formal / len(mine) > 0.45 and sum(map(len, mine)) / len(mine) > 14
+        v["narration"] = False
+        if len(mine) >= 20:
+            sample = "\n".join(sorted(mine, key=len, reverse=True)[:15])
+            try:
+                r = ollama_chat(a.ollama, a.model, [{"role": "user", "content":
+                    "These lines are all spoken by one voice in a video (%s):\n%s\n\nIs this voice a narrator, i.e. a "
+                    "voice-over that describes or explains the story to the viewer (third person, no one answers it), "
+                    "rather than a person talking with others in the scene? Answer with one word: yes or no." % (a.lang, sample)}],
+                    num_ctx=4096)
+                v["narration"] = strip_think(r).strip().lower().startswith("yes")
+            except Exception as e:
+                log("narrator check failed for %s: %s" % (k, e))
+            if v["narration"]:
+                log("%s looks like the narrator" % k)
     cast = "\n".join("- [%s]: %d lines, %s voice%s%s" % (k, v.get("lines", 0), v.get("voice") or {"F": "female", "M": "male"}.get(k[:1], "unknown"),
                       (" (~%d Hz)" % v["f0"]) if v.get("f0") else "",
                       " - long formal declarative lines: most likely the NARRATOR" if v.get("narration") else "")
