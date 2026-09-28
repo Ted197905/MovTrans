@@ -64,11 +64,19 @@ def span_from_chars(chars):
     cs = [c for c in chars if isinstance(c.get("start"), (int, float)) and c["end"] - c["start"] >= 0.03]
     if not cs:
         return None
+    # characters scattered over separate bursts (a moan matched here, the line there): keep the biggest cluster
+    clusters, cur = [], [cs[0]]
+    for prev, c in zip(cs, cs[1:]):
+        if c["start"] - min(prev["end"], prev["start"] + STRETCH) > 1.0:
+            clusters.append(cur); cur = []
+        cur.append(c)
+    clusters.append(cur)
+    cs = max(clusters, key=len)
     lead = cs[0]
     start = lead["start"] if lead["end"] - lead["start"] <= STRETCH else lead["end"] - 0.2
     tail = cs[-1]
     end = tail["end"] if tail["end"] - tail["start"] <= STRETCH else tail["start"] + 0.2
-    return max(start, cs[0]["start"]), max(end, start + 0.1), len(cs)
+    return max(start, cs[0]["start"]), max(end, start + 0.1), len(cs)  # n counts the cluster only
 
 
 def align_cues(audio, cues, lang, device, aligner=None, pad_start=0.1, pad_end=0.35):

@@ -25,6 +25,7 @@ import numpy as np
 
 from subs import log, progress, write_srt, write_vtt
 from timing import align_cues, finish_cues, fix_word_spans, peak_db
+from verify import decode_spans, keep as agree, vad_max, vad_probs
 
 SR = 16000
 NO_SPACE_LANGS = {"ja", "zh", "th"}
@@ -320,10 +321,9 @@ def keep_segment(s, min_word_prob=0.0):
     return sum(w.probability for w in s.words) / len(s.words) >= min_word_prob
 
 
-def fill_pass(model_name, audio, clip_list, lang, device, compute, total):
-    """Second Whisper model (no word timestamps: distil models cannot align) + wav2vec2 forced alignment."""
-    from faster_whisper import WhisperModel
-    m = WhisperModel(model_name, device=device, compute_type=compute)
+def fill_pass(m, audio, clip_list, lang, device, total, verify):
+    """Second Whisper model (no word timestamps: distil models cannot align) + wav2vec2 forced alignment.
+    verify(segs) -> the segments the first model agrees with."""
     seg_iter, _ = m.transcribe(audio, language=lang, beam_size=5, temperature=[0.0, 0.3], word_timestamps=False,
                                condition_on_previous_text=False, vad_filter=False,
                                clip_timestamps=[x for c in clip_list for x in c])
@@ -340,11 +340,9 @@ def fill_pass(model_name, audio, clip_list, lang, device, compute, total):
         if core in ("ごめん", "ごめんなさい", "すいません", "すみません") and any(abs(s.start - c) < 0.6 for c in starts):
             continue  # kotoba-whisper's own filler on a window that starts in noise
         segs.append({"start": float(s.start), "end": float(s.end), "text": text})
-    del m; gc.collect()
-    if device == "cuda":
-        import torch
-        torch.cuda.empty_cache()
-    log("fill pass: %d segment(s) kept" % len(segs))
+    n = len(segs)
+    segs = verify(segs)
+    log("fill pass: %d segment(s), %d confirmed" % (n, len(segs)))
     if not segs:
         return []
     words = []
@@ -535,17 +533,36 @@ def main():
                     s.compression_ratio, sum(w.probability for w in s.words) / len(s.words), (s.text or "").strip()[:40]))
                 kept.append(s)
         kept.sort(key=lambda s: s.start)
+    log("segments %d, rejected %d, kept %d" % (raw, len(rejected), len(kept)))
+    probs = vad_probs(audio)
+    fill_model = WhisperModel(a.fill_model, device=device, compute_type=compute) if a.fill_model else None
+
+    def confirmed(segs, other, what):
+        """Hallucination check: keep a line only when the VAD hears speech or the other model decodes the same words."""
+        if other is None or not segs:
+            return segs
+        texts = decode_spans(other, audio, [(x["start"], x["end"]) for x in segs], a.lang)
+        out = []
+        for x, t in zip(segs, texts):
+            v = vad_max(probs, x["start"], x["end"])
+            if agree(x["text"], t, v):
+                out.append(x)
+            else:
+                log("unconfirmed %s %.1f-%.1f (vad %.2f): %s | other: %s" % (what, x["start"], x["end"], v, x["text"][:30], t[:30]))
+        return out
+
+    main_segs = [{"start": float(s.start), "end": float(s.end), "text": (s.text or "").strip(), "seg": s} for s in kept]
+    main_segs = confirmed(main_segs, fill_model, "main")
+    log("main pass: %d of %d segment(s) confirmed" % (len(main_segs), len(kept)))
+    progress(56)
     words, spans = [], []
-    for s in kept:
-        spans.append((float(s.start), float(s.end)))
+    for x in main_segs:
+        s = x["seg"]
+        spans.append((x["start"], x["end"]))
         ws = [{"start": float(w.start), "end": float(w.end), "word": w.word, "spk": ""} for w in s.words if w.word.strip()]
         words += fix_word_spans(undouble(ws), a.lang)
-    log("segments %d, rejected %d, kept %d, words %d" % (raw, len(rejected), len(kept), len(words)))
-    del model; gc.collect()
-    if device == "cuda":
-        torch.cuda.empty_cache()
 
-    if a.fill_model:
+    if fill_model:
         # a second model listens to everything the first left empty; a different model fails differently
         # (large-v3 turns moaning scenes into garbage windows, kotoba-whisper keeps the short lines between them)
         holes, pos = [], 0.0
@@ -558,13 +575,15 @@ def main():
             for cs, ce in clips_for(audio[int(hs * SR):int(he * SR)]):
                 fill_clips.append([hs + cs, hs + ce])
         log("fill pass: %s on %d span(s), %.0fs" % (a.fill_model, len(holes), sum(e - s for s, e in holes)))
-        fill_words = fill_pass(a.fill_model, audio, fill_clips, a.lang, device, compute, total)
+        fill_words = fill_pass(fill_model, audio, fill_clips, a.lang, device, total, lambda segs: confirmed(segs, model, "fill"))
         for w in fill_words:
             words.append(w)
         spans += [(w["start"], w["end"]) for w in fill_words]
     words.sort(key=lambda w: w["start"])
+    del model, fill_model; gc.collect()
     if device == "cuda":
         torch.cuda.empty_cache()
+    log("words %d" % len(words))
     progress(62)
 
     cast = {}
