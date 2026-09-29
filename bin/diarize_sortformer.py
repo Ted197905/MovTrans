@@ -2,7 +2,7 @@
 """
 Speaker diarization with NVIDIA streaming Sortformer (runs in the NeMo venv: pyenv/nemo/bin/python).
 
-  diarize_sortformer.py --audio audio.wav --out turns.json
+  diarize_sortformer.py --audio audio.wav --out turns.json [--chunk 3600]
 
 Writes [[start, end, "speaker_N"], ...]. Offline preset (high latency = best accuracy), up to 4 speakers per
 1 h piece; longer files are diarized in overlapping pieces whose labels are matched on the overlap.
@@ -42,6 +42,25 @@ def overlap_matrix(a_turns, b_turns, lo, hi):
     return m
 
 
+def pieces(m, path, info, dur, chunk):
+    import tempfile
+    starts = [0.0]
+    while starts[-1] + chunk < dur:
+        starts.append(starts[-1] + chunk - OVERLAP)
+    chunks = []
+    with tempfile.TemporaryDirectory() as tmp:
+        for k, cs in enumerate(starts):
+            ce = min(dur, cs + chunk)
+            piece = os.path.join(tmp, "piece%d.wav" % k)
+            data, sr = sf.read(path, start=int(cs * info.samplerate), frames=int((ce - cs) * info.samplerate), dtype="int16")
+            sf.write(piece, data, sr)
+            t = run(m, piece, cs)
+            sys.stderr.write("sortformer piece %d (%.0f-%.0f s): %d turns, %d speakers\n" % (k, cs, ce, len(t), len({x[2] for x in t})))
+            chunks.append((cs, ce, t))
+            os.unlink(piece)
+    return stitch(chunks)
+
+
 def stitch(chunks):
     """chunks: [(start, end, turns)] in order. Labels of each piece are renamed to the global speaker they
     co-occur with in the overlap with the previous piece; new voices get new global names."""
@@ -71,9 +90,11 @@ def main():
     ap.add_argument("--audio", required=True)
     ap.add_argument("--out", required=True)
     ap.add_argument("--model", default="nvidia/diar_streaming_sortformer_4spk-v2")
+    ap.add_argument("--chunk", type=float, default=CHUNK, help="seconds per piece for long files (the caller retries with smaller pieces)")
     a = ap.parse_args()
     logging.disable(logging.WARNING)
     os.environ.setdefault("NEMO_LOGGING_LEVEL", "ERROR")
+    global sf
     import soundfile as sf
     from nemo.collections.asr.models import SortformerEncLabelModel
     m = SortformerEncLabelModel.from_pretrained(a.model, map_location="cuda" if _cuda() else "cpu")
@@ -83,25 +104,7 @@ def main():
     sm.spkcache_update_period = 300; sm.spkcache_len = 188
     info = sf.info(a.audio)
     dur = info.frames / info.samplerate
-    if dur <= CHUNK + OVERLAP:
-        turns = run(m, a.audio)
-    else:
-        import tempfile
-        starts = [0.0]
-        while starts[-1] + CHUNK < dur:
-            starts.append(starts[-1] + CHUNK - OVERLAP)
-        chunks = []
-        with tempfile.TemporaryDirectory() as tmp:
-            for k, cs in enumerate(starts):
-                ce = min(dur, cs + CHUNK)
-                piece = os.path.join(tmp, "piece%d.wav" % k)
-                data, sr = sf.read(a.audio, start=int(cs * info.samplerate), frames=int((ce - cs) * info.samplerate), dtype="int16")
-                sf.write(piece, data, sr)
-                t = run(m, piece, cs)
-                sys.stderr.write("sortformer piece %d (%.0f-%.0f s): %d turns, %d speakers\n" % (k, cs, ce, len(t), len({x[2] for x in t})))
-                chunks.append((cs, ce, t))
-                os.unlink(piece)
-        turns = stitch(chunks)
+    turns = run(m, a.audio) if dur <= a.chunk + OVERLAP else pieces(m, a.audio, info, dur, a.chunk)
     with open(a.out, "w", encoding="utf-8") as f:
         json.dump(turns, f)
     sys.stderr.write("sortformer: %d turns, %d speakers\n" % (len(turns), len({t[2] for t in turns})))

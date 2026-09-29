@@ -7,7 +7,7 @@ use CodeIgniter\Model;
 class JobModel extends Model
 {
     protected $table         = 'jobs';
-    protected $allowedFields = ['video_id', 'status', 'stage', 'progress', 'log', 'error', 'started_at', 'finished_at'];
+    protected $allowedFields = ['video_id', 'status', 'stage', 'progress', 'log', 'error', 'warnings', 'started_at', 'finished_at'];
     protected $useTimestamps = true;
 
     public function latestFor(int $videoId): ?array

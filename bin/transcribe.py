@@ -23,7 +23,7 @@ import zlib
 
 import numpy as np
 
-from subs import log, progress, write_srt, write_vtt
+from subs import log, progress, warn, write_srt, write_vtt
 from timing import align_cues, finish_cues, fix_word_spans, peak_db
 from verify import decode_spans, keep as agree, vad_max, vad_probs
 
@@ -188,22 +188,27 @@ def diarize_sortformer(audio_path, python_bin):
     import subprocess
     import tempfile
     out = os.path.join(tempfile.gettempdir(), "sortformer_%d.json" % os.getpid())
+    err = ""
     try:
-        r = subprocess.run([python_bin, os.path.join(os.path.dirname(os.path.abspath(__file__)), "diarize_sortformer.py"),
-                            "--audio", audio_path, "--out", out], capture_output=True, text=True, timeout=1800)
-        if r.returncode != 0:
-            raise RuntimeError(r.stderr.strip().splitlines()[-1][:300] if r.stderr.strip() else "exit %d" % r.returncode)
-        turns = [(float(s), float(e), str(l)) for s, e, l in json.load(open(out, encoding="utf-8"))]
-        log([ln for ln in r.stderr.splitlines() if ln.startswith("sortformer:")][-1] if "sortformer:" in r.stderr else "sortformer: %d turns" % len(turns))
-        return turns
+        for chunk in (3600, 1800, 900):  # a GPU failure (WSL: "Failed to create GPU mapping") is retried in a fresh process with smaller pieces
+            r = subprocess.run([python_bin, os.path.join(os.path.dirname(os.path.abspath(__file__)), "diarize_sortformer.py"),
+                                "--audio", audio_path, "--out", out, "--chunk", str(chunk)], capture_output=True, text=True, timeout=1800)
+            if r.returncode == 0:
+                turns = [(float(s), float(e), str(l)) for s, e, l in json.load(open(out, encoding="utf-8"))]
+                os.unlink(out)
+                log([ln for ln in r.stderr.splitlines() if ln.startswith("sortformer:")][-1] if "sortformer:" in r.stderr else "sortformer: %d turns" % len(turns))
+                return turns
+            err = r.stderr.strip().splitlines()[-1][:300] if r.stderr.strip() else "exit %d" % r.returncode
+            log("sortformer failed with %d s pieces: %s" % (chunk, err))
     except Exception as e:
-        log("sortformer skipped: %s" % str(e).split("\n")[0][:300])
-        return None
-    finally:
-        try:
-            os.unlink(out)
-        except OSError:
-            pass
+        err = str(e).split("\n")[0][:300]
+    log("sortformer skipped: %s" % err)
+    warn("화자 분리: Sortformer 실패 (%s)" % err[:120])
+    try:
+        os.unlink(out)
+    except OSError:
+        pass
+    return None
 
 
 def agreement(words, turns_a, turns_b):
@@ -357,6 +362,7 @@ def fill_pass(m, audio, clip_list, lang, device, total, verify):
                     words.append({"start": float(w["start"]), "end": float(w["end"]), "word": w["word"], "spk": ""})
     except Exception as e:
         log("fill alignment failed (%s); using segment times" % str(e).split("\n")[0][:200])
+        warn("보충 대사 정렬 실패: 세그먼트 시각 사용 (%s)" % str(e).split("\n")[0][:100])
         for s in segs:
             words.append({"start": s["start"], "end": s["end"], "word": s["text"], "spk": ""})
     for s in segs[:400]:
@@ -553,6 +559,9 @@ def main():
     probs = vad_probs(audio)
     fill_model = WhisperModel(a.fill_model, device=device, compute_type=compute) if a.fill_model else None
 
+    if not fill_model:
+        warn("환각 검증 없음: 이 언어에는 보충 모델이 없어 한 모델의 인식 결과를 그대로 사용")
+
     def confirmed(segs, other, what):
         """Hallucination check: keep a line only when the VAD hears speech or the other model decodes the same words."""
         if other is None or not segs:
@@ -618,6 +627,9 @@ def main():
         elif turns2:
             turns = turns2
             log("diarization: pyannote, %d turns, %d speakers" % (len(turns), len({t[2] for t in turns})))
+            warn("화자 분리: pyannote 로 대체 (%d명 판정; 한 사람이 여러 태그로 갈릴 수 있음)" % len({t[2] for t in turns}))
+    if not turns:
+        warn("화자 분리 없음: 음높이로 여/남만 구분")
     progress(78)
     if turns:
         # diarized clusters are named S1, S2, ... by size; the voice pitch is only a hint for the translator,
@@ -648,6 +660,8 @@ def main():
     # while the previous line is still being said): every cue is force-aligned to the audio
     moved = align_cues(audio, cues, a.lang, device)
     log("aligned %d of %d cues" % (moved, len(cues)))
+    if cues and moved < 0.8 * len(cues):
+        warn("큐 타이밍 정렬 %d/%d 만 성공: 나머지는 Whisper 시각" % (moved, len(cues)))
     for c in finish_cues(cues):
         log("drop duplicate %.1f-%.1f: %s" % (c["start"], c["end"], c["text"][:40]))
     progress(92)

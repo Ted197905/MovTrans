@@ -20,7 +20,7 @@ import os
 import re
 import time
 
-from subs import drop_persistent_text, log, ollama_chat, ollama_unload, progress, strip_think, write_srt, write_vtt
+from subs import drop_persistent_text, log, ollama_chat, ollama_unload, progress, strip_think, warn, write_srt, write_vtt
 
 BATCH = 25
 LOOKAHEAD = 3
@@ -242,6 +242,7 @@ def main():
             got = parse_numbered(r, len(chunk))
         except Exception as e:
             log("proofread %d failed: %s" % (i // PROOF_BATCH, e))
+            warn("인식 교정 배치 %d 실패: 이 구간은 교정 없이 번역" % (i // PROOF_BATCH))
             continue
         for k, s in enumerate(chunk):
             t = got.get(k + 1, "").strip()
@@ -270,6 +271,7 @@ def main():
         log("style guide:\n" + bible)
     except Exception as e:
         log("style guide failed: %s" % e)
+        warn("스타일 가이드 생성 실패: 말투/호칭 일관성 없이 번역")
     with open(os.path.join(a.out_dir, "style.txt"), "w", encoding="utf-8") as f:
         f.write(bible)
     progress(5)
@@ -319,6 +321,8 @@ def main():
             ko.append(t or s["text"])
         if redo:
             log("batch %d: %d line(s) redone" % (b, redo))
+        if not got:
+            warn("번역 배치 %d (%.0f초 부근) 실패: 원문 그대로 남음" % (b, batch[0]["start"]))
         for s, t in zip(batch, ko):
             cue = {"start": s["start"], "end": s["end"], "text": t, "spk": s.get("spk", "")}
             if s.get("screen") == "caption":
@@ -340,6 +344,7 @@ def main():
                                                         pairs=pairs, n=len(chunk))), len(chunk))
             except Exception as e:
                 log("polish %d failed: %s" % (i // POLISH_BATCH, e))
+                warn("감수 배치 %d 실패: 초벌 번역 유지" % (i // POLISH_BATCH))
                 continue
             for k, (s, c) in enumerate(zip(src, chunk)):
                 t = clean(got.get(k + 1, ""))

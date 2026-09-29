@@ -19,6 +19,7 @@ class Pipeline
     private VideoModel $videos;
     private MovTrans $cfg;
     private array $logLines = [];
+    private array $warnings = [];  // "warn: ..." lines from the scripts: a fallback path was taken, the result is degraded
 
     public function __construct()
     {
@@ -49,6 +50,7 @@ class Pipeline
     {
         $echo ??= static function (string $m): void {};
         $this->logLines = [];
+        $this->warnings = [];
         $jobId = (int) $job['id'];
         $video = $this->videos->find((int) $job['video_id']);
         try {
@@ -92,6 +94,7 @@ class Pipeline
                     ]);
                 } catch (\Throwable $e) {  // on-screen text is a bonus: never fail the job over it
                     $echo('screen text skipped: ' . $e->getMessage());
+                    $this->warn($jobId, '화면 텍스트(OCR) 단계 실패, 건너뜀: ' . mb_substr($e->getMessage(), 0, 200));
                     @unlink($dir . '/screen.json');
                 }
 
@@ -145,11 +148,18 @@ class Pipeline
             $this->logLines[] = $line;
             if (count($this->logLines) > 200) array_shift($this->logLines);
             $this->jobs->update($jobId, ['log' => $this->log()]);
+            if (str_starts_with($line, 'warn: ')) $this->warn($jobId, substr($line, 6));
             $echo('  ' . $line);
         }, 0, $env);
         if ($r['code'] !== 0) {
             throw new \RuntimeException(basename($scriptArgs[0]) . ' exited ' . $r['code'] . ': ' . mb_substr(trim($r['stderr']), -600));
         }
+    }
+
+    private function warn(int $jobId, string $msg): void
+    {
+        $this->warnings[] = $msg;
+        $this->jobs->update($jobId, ['warnings' => mb_substr(implode("\n", $this->warnings), 0, 4000)]);
     }
 
     private function stage(int $jobId, string $stage): void

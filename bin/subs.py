@@ -15,6 +15,11 @@ def log(msg):
     sys.stderr.flush()
 
 
+def warn(msg):
+    """A fallback path was taken and the result is degraded: the worker shows these lines on the video page."""
+    log("warn: " + msg)
+
+
 def _ts(t, sep):
     t = max(0.0, float(t))
     h = int(t // 3600); m = int(t % 3600 // 60); s = int(t % 60); ms = int(round((t - int(t)) * 1000))

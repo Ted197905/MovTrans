@@ -27,6 +27,7 @@ input, select { display:block; width:100%; margin-top:4px; padding:8px 10px; fon
 .linkbtn { background:none; border:0; padding:0; color:var(--accent); }
 .linkbtn.danger { color:var(--danger); }
 .alert { background:rgba(215,0,21,.08); color:var(--danger); border-radius:8px; padding:10px 12px; margin:10px 0; font-size:14px; white-space:pre-wrap; }
+.alert.warn { background:rgba(230,140,0,.12); color:#8a5200; }
 .drop { border:2px dashed var(--line); border-radius:12px; padding:36px; text-align:center; color:var(--muted); }
 .drop.over { border-color:var(--accent); color:var(--accent); }
 .up { margin-top:10px; font-size:13px; }

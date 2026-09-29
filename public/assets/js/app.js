@@ -143,6 +143,8 @@ window.MT = (() => {
         s.querySelector('.pct').textContent = t;
       });
       if (j.status === 'failed' && j.error) { errEl.hidden = false; errEl.textContent = j.error; } else errEl.hidden = true;
+      const warnEl = root.querySelector('#warnings');
+      if (warnEl) { warnEl.hidden = !j.warnings; warnEl.textContent = j.warnings || ''; }
       if (logEl && j.log != null) logEl.textContent = j.log;
     };
     render(job);

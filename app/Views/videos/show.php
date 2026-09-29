@@ -28,6 +28,7 @@ $hasSdh  = in_array(['ko.sdh', 'vtt'], $subtitles, true);
       </div>
     <?php endforeach ?>
     <div id="error" class="alert" hidden><?= $job && $job['error'] ? esc($job['error']) : '' ?></div>
+    <div id="warnings" class="alert warn" <?= $job && ! empty($job['warnings']) ? '' : 'hidden' ?>><?= $job ? nl2br(esc($job['warnings'] ?? '')) : '' ?></div>
   </div>
   <details class="log"><summary>로그</summary><pre id="log"><?= $job ? esc($job['log'] ?? '') : '' ?></pre></details>
 </div>
