@@ -410,7 +410,10 @@ def smooth_speakers(words, lang):
             return
 
 
-BREAK_JA = re.compile(r"([。、！？!?…]|[てでにはがをとねよかのもし])$")  # punctuation or a particle: a place to cut
+BREAK_JA = re.compile(r"([。、！？!?…]|[てでにはがをとねよかのも])$")  # punctuation or a particle: a place to cut
+# the "particle" is part of a word when this follows it (です, ている, かも, から, とき...)
+NO_BREAK_JA = {"です", "でし", "てい", "てる", "てた", "てく", "てみ", "てお", "てあ", "から", "かな", "かも", "とき", "とこ", "にな", "ので", "もう",
+               "はい", "がっ", "ねえ", "よう", "のに", "では", "でも", "とも", "には", "にも", "かし"}
 
 
 def build_cues(words, lang, max_dur=6.0, max_gap=0.7):
@@ -445,10 +448,23 @@ def build_cues(words, lang, max_dur=6.0, max_gap=0.7):
             elif too_long:
                 cut = len(cur)  # default: cut here
                 if cjk and len(cur) > 3:
-                    for j in range(len(cur) - 1, max(1, len(cur) - 10), -1):  # last break point in the tail
-                        if BREAK_JA.search(cur[j]["word"].strip()) and len(text_of(cur[:j + 1])) >= 6:
-                            cut = j + 1
-                            break
+                    # best break point in the tail: a pause first, then punctuation, then a particle; never
+                    # before a small kana or a long-vowel mark (that is the middle of a word: か|っこいい)
+                    best = 0.0
+                    for j in range(1, len(cur)):
+                        if len(text_of(cur[:j + 1])) < 6 or re.match(r"[ぁぃぅぇぉっゃゅょァィゥェォッャュョー]", cur[j + 1]["word"].strip() if j + 1 < len(cur) else txt):
+                            continue
+                        wtxt = cur[j]["word"].strip()
+                        nxt = cur[j + 1]["word"].strip() if j + 1 < len(cur) else txt
+                        score = min(cur[j + 1]["start"] - cur[j]["end"] if j + 1 < len(cur) else gap, 0.6)
+                        if re.search(r"[。、！？!?…]$", wtxt):
+                            score += 0.5
+                        elif re.search(r"(です|ます|ました|でした|ですか|ますか|でしょ|だよ|だね|ない)$", text_of(cur[:j + 1])) and nxt[:1] not in "かねよ":
+                            score += 0.4  # a sentence ending without punctuation
+                        elif BREAK_JA.search(wtxt) and (wtxt[-1] + nxt[:1]) not in NO_BREAK_JA:
+                            score += 0.2
+                        if score >= best and score > 0:
+                            best, cut = score, j + 1
                 flush(cur[:cut]); cur = cur[cut:]
         cur.append(dict(w, word=txt if cjk else w["word"]))
     if cur:

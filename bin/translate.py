@@ -86,9 +86,10 @@ BIBLE_PROMPT = (
     "Write a concise style guide, in Korean, for translating these subtitles as a Korean subtitler would "
     "(no more than 400 characters, plain lines, no markdown):\n"
     "1. 등장인물: 실제로 등장하는 사람들 (이름/호칭이 대사에 나오면 그대로), 성별, 대략 나이, 성격, 역할, 어느 태그로 나오는지\n"
-    "2. 관계와 말투: 각 인물이 상대에게 쓰는 말투(반말/존댓말/높임), 서로를 부르는 호칭. 내레이션/해설이 있으면 그 문체(예: 다큐 해설체 '-습니다'). 영상 전체에서 고정\n"
+    "2. 관계와 말투: 각 인물이 상대에게 쓰는 말투(반말/존댓말/높임), 서로를 부르는 호칭의 한국어 표기 (예: 旦那様 -> 서방님, ご主人様 -> 주인님; 원문 표기를 그대로 쓰지 않는다). 내레이션/해설이 있으면 그 문체(예: 다큐 해설체 '-습니다'). 영상 전체에서 고정\n"
     "3. 전체 톤과 장르, 번역 시 지킬 점 (표현 수위는 지시대로)\n"
-    "4. 반복되는 고유명사/용어와 그 한국어 표기. 일본 인명은 일본어 읽기로 적고 한자의 한국 음독은 쓰지 않는다 (이 영상에 없는 이름은 적지 않는다)"
+    "4. 반복되는 고유명사(인명, 지명, 상품명)의 한국어 표기만. 일본 인명은 일본어 읽기로 적고 한자의 한국 음독은 쓰지 않는다 (이 영상에 없는 이름은 적지 않는다). "
+    "일반 어휘, 은어, 신체 부위, 감탄사는 적지 않는다: 그런 말은 음차하지 않고 뜻으로 옮긴다"
 )
 
 POLISH = (
@@ -109,6 +110,19 @@ USER = (
     "Translate lines 1-{n} from {lang} into Korean subtitles. Answer with exactly {n} lines in the form "
     "\"<number>. <Korean subtitle>\", same numbering, nothing else.\n\n{lines}"
 )
+
+
+# words the model tends to leave in the source script; a plain Korean rendering beats deleting them
+LEAKS = {"旦那様": "서방님", "旦那さん": "남편", "旦那": "남편", "ご主人様": "주인님", "ご主人": "남편", "お兄ちゃん": "오빠", "お姉ちゃん": "누나",
+         "ママ": "엄마", "パパ": "아빠", "先生": "선생님", "社長": "사장님", "お母さん": "엄마", "お父さん": "아빠"}
+
+
+def clean(ko):
+    """Leaked speaker/screen tags out; a source word left untranslated becomes its usual Korean rendering."""
+    ko = re.sub(r"\[(?:SUB|TXT|S\d{1,2}(?:/NAR)?|NAR|F|M|\?)\]", "", ko)
+    for k, v in LEAKS.items():
+        ko = ko.replace(k, v)
+    return re.sub(r"\s+", " ", ko).strip(" ,")
 
 
 def bad(src, ko):
@@ -200,9 +214,24 @@ def main():
         return strip_think(ollama_chat(a.ollama, a.model, [{"role": "system", "content": system},
                                                            {"role": "user", "content": user}], num_ctx=a.num_ctx, **kw))
 
-    # 0. proofread the recognition output in context (homophones, cut words); noise lines are dropped
+    # 0. proofread the recognition output in context (homophones, cut words); noise lines are dropped.
+    # The result is cached in proof.json so that a re-run of this stage alone skips the 25 min pass.
     fixed = dropped = 0
     dialog = [s for s in segs if not s.get("screen")]
+    cache_path = os.path.join(a.out_dir, "proof.json")
+    cache = {}
+    if os.path.isfile(cache_path):
+        cache = json.load(open(cache_path, encoding="utf-8"))
+        if cache.get("n") == len(dialog):
+            for s, t in zip(dialog, cache["lines"]):
+                if t == "-":
+                    s["drop"] = True
+                elif t:
+                    s["text"] = t
+            log("proofread: cached")
+            dialog = []
+        else:
+            cache = {}
     for i in range(0, len(dialog), PROOF_BATCH):
         chunk = dialog[i:i + PROOF_BATCH]
         lines = "\n".join("%d. %s%s" % (k + 1, tag(s), s["text"]) for k, s in enumerate(chunk))
@@ -224,7 +253,11 @@ def main():
                 s["text"] = t
                 fixed += 1
         progress(1 + 4 * (i + len(chunk)) / max(1, len(dialog)))
-    log("proofread: %d line(s) fixed, %d noise line(s) dropped" % (fixed, dropped))
+    if dialog:
+        log("proofread: %d line(s) fixed, %d noise line(s) dropped" % (fixed, dropped))
+        os.makedirs(a.out_dir, exist_ok=True)
+        with open(cache_path, "w", encoding="utf-8") as f:
+            json.dump({"n": len(dialog), "lines": ["-" if s.get("drop") else s["text"] for s in dialog]}, f, ensure_ascii=False)
     segs = [s for s in segs if not s.get("drop")]
 
     # 1. style guide from the whole script (first ~600 lines fit the context comfortably)
@@ -274,10 +307,11 @@ def main():
             if t.strip() in ("-", "—") and not s.get("screen"):
                 ko.append("-")
                 continue
+            t = clean(t)
             if bad(s["text"], t):
                 redo += 1
                 try:
-                    t2 = one(s)
+                    t2 = clean(one(s))
                     t = t2 if not bad(s["text"], t2) else (re.sub(FOREIGN, "", t2).strip() or t)
                 except Exception as e:
                     log("line redo failed: %s" % e)
@@ -307,7 +341,7 @@ def main():
                 log("polish %d failed: %s" % (i // POLISH_BATCH, e))
                 continue
             for k, (s, c) in enumerate(zip(src, chunk)):
-                t = got.get(k + 1, "")
+                t = clean(got.get(k + 1, ""))
                 if c["text"] == "-":
                     continue
                 if t and not bad(s["text"], t) and len(t) <= 3 * max(8, len(c["text"])):

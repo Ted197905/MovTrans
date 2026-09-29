@@ -105,7 +105,7 @@ class Videos extends BaseController
         if (in_array($video['status'], ['queued', 'processing'], true)) return;
         $id  = (int) $video['id'];
         $dir = VideoModel::dir($id);
-        foreach (['audio.wav', 'segments.json', 'scenes.json', 'screen.json', 'orig.srt', 'orig.vtt', 'ko.srt', 'ko.vtt', 'ko.sdh.srt', 'ko.sdh.vtt', 'style.txt'] as $f) {
+        foreach (['audio.wav', 'segments.json', 'scenes.json', 'screen.json', 'orig.srt', 'orig.vtt', 'ko.srt', 'ko.vtt', 'ko.sdh.srt', 'ko.sdh.vtt', 'style.txt', 'proof.json'] as $f) {
             @unlink($dir . '/' . $f);
         }
         Storage::removeDir($dir . '/frames');
