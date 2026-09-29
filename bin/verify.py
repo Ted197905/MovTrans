@@ -47,13 +47,13 @@ def decode_spans(model, audio, spans, lang, pad=0.2):
 
 
 def keep(text, other, vad):
-    """VAD hears speech (>= 0.4) -> keep. Otherwise the other model must agree (sim >= 0.5, or >= 0.3 with some VAD support)."""
+    """The other model must hear about the same words (sim >= 0.5, or >= 0.3 with some VAD support). A loud moan
+    or scream makes the VAD fire, so VAD alone never keeps a line: on those, both models invent different text
+    (video 10: "おめでとう", "アサイドラスコスカー" at VAD 0.5-0.6 with no agreement)."""
     core = PUNCT.sub("", text).lower()
     sim = similarity(text, other)
     if sim >= 0.99:
         return True
     if core in FILLERS or len(core) <= 2:
-        return vad >= 0.3
-    if vad >= 0.4:
-        return True
+        return vad >= 0.3 and sim >= 0.3
     return sim >= 0.5 or (sim >= 0.3 and vad >= 0.1)

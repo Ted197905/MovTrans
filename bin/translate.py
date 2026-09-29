@@ -14,6 +14,7 @@ Context-aware Korean subtitle translation through Ollama.
 Writes DIR/ko.srt and DIR/ko.vtt.
 """
 import argparse
+import difflib
 import json
 import os
 import re
@@ -24,6 +25,7 @@ from subs import drop_persistent_text, log, ollama_chat, ollama_unload, progress
 BATCH = 25
 LOOKAHEAD = 3
 POLISH_BATCH = 40
+PROOF_BATCH = 40
 FOREIGN = re.compile(r"[぀-ヿ一-鿿฀-๿Ѐ-ӿ]")  # kana, CJK ideographs, Thai, Cyrillic
 # "12. text", tolerating leaked speaker tags: "12. [F] text", "12. F. text", "12. (M1) text", "12. F: text"
 NUMBERED = re.compile(r"^\s*(\d{1,3})\s*[.):]\s*(?:[\[(]?(?:[FM?]\d?|S\d{1,2}(?:/NAR)?|SUB|TXT)[\])]?\s*[.:\-]?\s*)?(.*?)\s*$")
@@ -51,7 +53,24 @@ SYSTEM = (
     "person would really use. Keep each subtitle readable: at most two lines of about 16 Korean characters. "
     "Every output line must be fully Korean (Hangul); never leave source-language words, romanization or "
     "other scripts. Japanese personal names are written by their Japanese reading, never by the Korean reading "
-    "of the characters. Never add notes, explanations, speaker tags or brackets. {rating}"
+    "of the characters. Never transliterate other words by sound: interjections and slang (やばい, イク, すごい, "
+    "気持ちいい...) are rendered by what they mean in that situation. The source lines are speech recognition "
+    "output and can still contain mishearings (a near-homophone, a word cut at the line end): translate what the "
+    "speaker evidently meant in context. A line that is only meaningless syllables (recognition noise, not "
+    "speech) is answered with a single \"-\" so it can be dropped. Never add notes, explanations, speaker tags or "
+    "brackets. {rating}"
+)
+
+PROOF = (
+    "The lines below are automatic speech recognition output ({lang}) from one video, in order, each with its "
+    "speaker tag. Recognition errors are common: near-homophones (奈々様 or アンナさん heard for 旦那様/旦那さん, "
+    "母 for もう/まあ, 寝て for なって), a word cut off at the end of a line, and gibberish syllables invented on "
+    "moaning, breathing or music. Proofread the lines using the context of the whole batch. Rules: change a line "
+    "only when you are confident it was misheard, and then only the misheard word(s); keep everything else exactly "
+    "as written (same wording, punctuation and speech level; no polishing, no added words); a line that is "
+    "meaningless syllables or clearly not speech becomes a single \"-\"; never merge, split, drop or reorder lines. "
+    "Answer with exactly {n} lines in the form \"<number>. <line>\", same numbering, without the speaker tags, "
+    "nothing else.\n\nVoices:\n{cast}\n\nLines:\n{lines}"
 )
 
 BIBLE_PROMPT = (
@@ -181,6 +200,33 @@ def main():
         return strip_think(ollama_chat(a.ollama, a.model, [{"role": "system", "content": system},
                                                            {"role": "user", "content": user}], num_ctx=a.num_ctx, **kw))
 
+    # 0. proofread the recognition output in context (homophones, cut words); noise lines are dropped
+    fixed = dropped = 0
+    dialog = [s for s in segs if not s.get("screen")]
+    for i in range(0, len(dialog), PROOF_BATCH):
+        chunk = dialog[i:i + PROOF_BATCH]
+        lines = "\n".join("%d. %s%s" % (k + 1, tag(s), s["text"]) for k, s in enumerate(chunk))
+        try:
+            r = ollama_chat(a.ollama, a.model, [{"role": "user", "content": PROOF.format(lang=a.lang, n=len(chunk), cast=cast, lines=lines)}],
+                            num_ctx=a.num_ctx)
+            got = parse_numbered(r, len(chunk))
+        except Exception as e:
+            log("proofread %d failed: %s" % (i // PROOF_BATCH, e))
+            continue
+        for k, s in enumerate(chunk):
+            t = got.get(k + 1, "").strip()
+            if t in ("-", "—", "ー"):
+                s["drop"] = True
+                dropped += 1
+                log("noise %.1f: %s" % (s["start"], s["text"][:40]))
+            elif t and t != s["text"] and difflib.SequenceMatcher(None, t, s["text"]).ratio() >= 0.5:
+                log("fix %.1f: %s -> %s" % (s["start"], s["text"][:30], t[:30]))
+                s["text"] = t
+                fixed += 1
+        progress(1 + 4 * (i + len(chunk)) / max(1, len(dialog)))
+    log("proofread: %d line(s) fixed, %d noise line(s) dropped" % (fixed, dropped))
+    segs = [s for s in segs if not s.get("drop")]
+
     # 1. style guide from the whole script (first ~600 lines fit the context comfortably)
     step = max(1, len(segs) // 300)  # ~300 lines spread over the whole video (CPU-side prefill is the slow part)
     script = "\n".join("%s%s" % (tag(s), s["text"]) for s in segs[::step][:300])
@@ -225,6 +271,9 @@ def main():
         ko, redo = [], 0
         for k, s in enumerate(batch):
             t = got.get(k + 1, "")
+            if t.strip() in ("-", "—") and not s.get("screen"):
+                ko.append("-")
+                continue
             if bad(s["text"], t):
                 redo += 1
                 try:
@@ -259,6 +308,8 @@ def main():
                 continue
             for k, (s, c) in enumerate(zip(src, chunk)):
                 t = got.get(k + 1, "")
+                if c["text"] == "-":
+                    continue
                 if t and not bad(s["text"], t) and len(t) <= 3 * max(8, len(c["text"])):
                     if t != c["text"]:
                         polished += 1
@@ -270,6 +321,10 @@ def main():
         ollama_unload(a.ollama, a.model)  # free VRAM for the next job's Whisper run
     except Exception as e:
         log("unload failed: %s" % e)
+    noise = sum(1 for c in out if c["text"] == "-")
+    if noise:
+        log("%d noise line(s) dropped by the translator" % noise)
+    out = [c for c in out if c["text"] != "-"]
     write_srt(os.path.join(a.out_dir, "ko.srt"), out)
     write_vtt(os.path.join(a.out_dir, "ko.vtt"), out)
     sdh = build_sdh(out, sounds, castd)
