@@ -326,9 +326,10 @@ def keep_segment(s, min_word_prob=0.0):
     return sum(w.probability for w in s.words) / len(s.words) >= min_word_prob
 
 
-def fill_pass(m, audio, clip_list, lang, device, total, verify):
+def fill_pass(m, audio, clip_list, lang, device, total, verify, free):
     """Second Whisper model (no word timestamps: distil models cannot align) + wav2vec2 forced alignment.
-    verify(segs) -> the segments the first model agrees with."""
+    verify(segs) -> the segments the first model agrees with; free() drops both Whisper models before the aligner
+    is loaded (three models at once ran the 10 GB card out of memory)."""
     seg_iter, _ = m.transcribe(audio, language=lang, beam_size=5, temperature=[0.0, 0.3], word_timestamps=False,
                                condition_on_previous_text=False, vad_filter=False,
                                clip_timestamps=[x for c in clip_list for x in c])
@@ -348,6 +349,7 @@ def fill_pass(m, audio, clip_list, lang, device, total, verify):
     n = len(segs)
     segs = verify(segs)
     log("fill pass: %d segment(s), %d confirmed" % (n, len(segs)))
+    free()
     if not segs:
         return []
     words = []
@@ -608,7 +610,15 @@ def main():
             for cs, ce in clips_for(audio[int(hs * SR):int(he * SR)]):
                 fill_clips.append([hs + cs, hs + ce])
         log("fill pass: %s on %d span(s), %.0fs" % (a.fill_model, len(holes), sum(e - s for s, e in holes)))
-        fill_words = fill_pass(fill_model, audio, fill_clips, a.lang, device, total, lambda segs: confirmed(segs, [model], "fill"))
+        def free():
+            nonlocal model, fill_model
+            del model, fill_model
+            model = fill_model = None
+            gc.collect()
+            if device == "cuda":
+                torch.cuda.empty_cache()
+
+        fill_words = fill_pass(fill_model, audio, fill_clips, a.lang, device, total, lambda segs: confirmed(segs, [model], "fill"), free)
         for w in fill_words:
             words.append(w)
         spans += [(w["start"], w["end"]) for w in fill_words]

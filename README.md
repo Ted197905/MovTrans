@@ -89,7 +89,7 @@ export UV_INSTALL_DIR=$PWD/bin UV_NO_MODIFY_PATH=1 UV_PYTHON_INSTALL_DIR=$PWD/py
 curl -LsSf https://astral.sh/uv/install.sh | sh
 bin/uv python install 3.13
 bin/uv venv --python 3.13 venv
-bin/uv pip install --python venv/bin/python whisperx easyocr opencv-python-headless scipy
+bin/uv pip install --python venv/bin/python whisperx easyocr opencv-python-headless scipy pykakasi   # 또는 deploy/requirements-venv.lock.txt 로 uv pip sync
 venv/bin/python -c "import torch, whisperx, easyocr; print(torch.cuda.is_available())"
 ```
 
