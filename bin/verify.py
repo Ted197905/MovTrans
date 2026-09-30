@@ -10,8 +10,10 @@ SR = 16000
 FRAME = 512
 PUNCT = re.compile(r"[\s。、．，,.!！?？…・「」\"'()（）\-〜～ー]")
 # things every Whisper variant writes on non-speech (kotoba is distilled from large-v3): need a VAD vote as well
-FILLERS = {"ごめん", "ごめんなさい", "すいません", "すみません", "ごちそう", "ごちそうさま", "ありがとう", "ありがとうございました",
-           "ありがとうございます", "はい", "うん", "よいしょ", "おやすみなさい", "おやすみ", "さあ", "ご", "thank you", "thanks", "okay", "ok"}
+FILLERS = {"ごめん", "ごめんなさい", "すいません", "すみません", "ごちそう", "ごちそうさま", "ごちそうさまでした", "ありがとう",
+           "ありがとうございました", "ありがとうございます", "おめでとう", "おめでとうございます", "お疲れ様", "お疲れ様でした",
+           "よろしくお願いします", "いただきます", "やったー", "はい", "うん", "よいしょ", "おやすみなさい", "おやすみ", "さあ", "ご",
+           "thank you", "thanks", "okay", "ok"}
 
 
 def vad_probs(audio):
@@ -27,12 +29,21 @@ def vad_max(probs, start, end):
 
 
 def similarity(a, b):
+    """How much of line a the other decode b contains. b comes from a wider window, so it may carry the neighbouring
+    words too: a is matched against every stretch of b of about its own length and the best one counts."""
     a, b = PUNCT.sub("", a).lower(), PUNCT.sub("", b).lower()
-    return difflib.SequenceMatcher(None, a, b).ratio() if a and b else 0.0
+    if not a or not b:
+        return 0.0
+    w = len(a) + 2
+    if len(b) <= w:
+        return difflib.SequenceMatcher(None, a, b).ratio()
+    return max(difflib.SequenceMatcher(None, a, b[i:i + w]).ratio() for i in range(0, len(b) - w + 1))
 
 
-def decode_spans(model, audio, spans, lang, pad=0.2):
-    """The other model's text for each (start, end) span, decoded on its own (no 30 s window to invent a story in)."""
+def decode_spans(model, audio, spans, lang, pad=1.0):
+    """The other model's text for each (start, end) span, decoded on its own (no 30 s window to invent a story in).
+    The pad matters: on a clip of one or two seconds Whisper answers with stock phrases (a real "大好き" came back
+    as "お疲れ様です"), with a second of context on each side it hears the line."""
     if not spans:
         return []
     clips = [[max(0.0, s - pad), min(len(audio) / SR, e + pad)] for s, e in spans]
@@ -52,8 +63,10 @@ def keep(text, other, vad):
     (video 10: "おめでとう", "アサイドラスコスカー" at VAD 0.5-0.6 with no agreement)."""
     core = PUNCT.sub("", text).lower()
     sim = similarity(text, other)
+    if core in FILLERS:  # both models write these on music (おめでとうございます over the opening tune): VAD must agree
+        return vad >= 0.3 and sim >= 0.3
     if sim >= 0.99:
         return True
-    if core in FILLERS or len(core) <= 2:
+    if len(core) <= 2:
         return vad >= 0.3 and sim >= 0.3
     return sim >= 0.5 or (sim >= 0.3 and vad >= 0.1)

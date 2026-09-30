@@ -10,7 +10,7 @@ On-screen text: burned-in subtitles, title cards, place/time captions (signs, lo
 4. One full-size frame per interval goes to the vision model, which reads the text, classifies it and
    translates it into Korean.
 
-Writes screen.json: [{"start", "end", "type": "subtitle"|"caption", "text", "ko"}].
+Writes screen.json: [{"start", "end", "type": "subtitle"|"caption", "y": 0-100 (top edge), "text", "ko"}].
 """
 import argparse
 import base64
@@ -34,7 +34,8 @@ PROMPT = (
     "clothing) even when it is readable and relevant\n"
     "- logo: broadcaster/studio logo, watermark, channel name, rating badge\n"
     "- ui: timers, counters, camera info\n"
-    "Return only a JSON array: [{\"text\": \"...\", \"type\": \"subtitle|caption|sign|logo|ui\", "
+    "Return only a JSON array, top to bottom: [{\"text\": \"...\", \"type\": \"subtitle|caption|sign|logo|ui\", "
+    "\"y\": <vertical position of the text's top edge, 0 = top of the frame, 100 = bottom>, "
     "\"ko\": \"natural Korean subtitle translation of the text (for subtitle and caption only, else empty)\"}]. "
     "Only include text you can read clearly and completely; skip small, blurry, cut-off or partly hidden text. "
     "If there is no text, return []. Do not refuse."
@@ -42,6 +43,14 @@ PROMPT = (
 
 
 URLISH = re.compile(r"(https?://|www\.|\.(com|net|cc|tv|xyz|jp|kr|io)\b|地址|网址|@)", re.I)
+
+
+def ypos(item):
+    """Vertical position 0-100 the reader gave the text (captions shown together are stacked in this order)."""
+    try:
+        return max(0, min(100, int(float(item.get("y", 50)))))
+    except (TypeError, ValueError):
+        return 50
 
 
 def probe_dims(video):
@@ -185,7 +194,7 @@ def main():
                 break
         if again is not None:
             for it in again:
-                out.append({"start": float(iv["start"]), "end": float(iv["end"]), "type": it["type"],
+                out.append({"start": float(iv["start"]), "end": float(iv["end"]), "type": it["type"], "y": ypos(it),
                             "text": " ".join(it["text"].split()), "ko": (it.get("ko") or "").strip()})
             continue
         t = (iv["start"] + iv["end"]) / 2.0
@@ -207,7 +216,7 @@ def main():
             logo_boxes += [b for b in iv["boxes"] if not any(iou(b, lb) > 0.5 for lb in logo_boxes)]
         read.append((mb, iv.get("sig"), kept))
         for it in kept:
-            out.append({"start": float(iv["start"]), "end": float(iv["end"]), "type": it["type"],
+            out.append({"start": float(iv["start"]), "end": float(iv["end"]), "type": it["type"], "y": ypos(it),
                         "text": " ".join(it["text"].split()), "ko": (it.get("ko") or "").strip()})
             log("%s %d-%ds: %s -> %s" % (it["type"], iv["start"], iv["end"], it["text"][:40], (it.get("ko") or "")[:40]))
         progress(55 + 44 * (k + 1) / max(1, len(intervals)))

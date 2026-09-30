@@ -560,24 +560,32 @@ def main():
     fill_model = WhisperModel(a.fill_model, device=device, compute_type=compute) if a.fill_model else None
 
     if not fill_model:
-        warn("환각 검증 없음: 이 언어에는 보충 모델이 없어 한 모델의 인식 결과를 그대로 사용")
+        warn("환각 검증 약함: 이 언어에는 보충 모델이 없어 large-v3 가 자기 결과를 다시 들어보는 것으로만 확인")
 
-    def confirmed(segs, other, what):
-        """Hallucination check: keep a line only when the VAD hears speech or the other model decodes the same words."""
-        if other is None or not segs:
+    def confirmed(segs, others, what):
+        """Hallucination check: keep a line only when another decode of that span hears the same words (verify.keep).
+        others = models asked in turn; a line the first one rejects gets the next one's opinion."""
+        others = [m for m in others if m is not None]
+        if not others or not segs:
             return segs
-        texts = decode_spans(other, audio, [(x["start"], x["end"]) for x in segs], a.lang)
-        out = []
-        for x, t in zip(segs, texts):
-            v = vad_max(probs, x["start"], x["end"])
-            if agree(x["text"], t, v):
-                out.append(x)
-            else:
-                log("unconfirmed %s %.1f-%.1f (vad %.2f): %s | other: %s" % (what, x["start"], x["end"], v, x["text"][:30], t[:30]))
+        out, pending = [], list(segs)
+        for k, other in enumerate(others):
+            texts = decode_spans(other, audio, [(x["start"], x["end"]) for x in pending], a.lang)
+            rest = []
+            for x, t in zip(pending, texts):
+                v = vad_max(probs, x["start"], x["end"])
+                if agree(x["text"], t, v):
+                    out.append(x)
+                elif k + 1 < len(others):
+                    rest.append(x)
+                else:
+                    log("unconfirmed %s %.1f-%.1f (vad %.2f): %s | other: %s" % (what, x["start"], x["end"], v, x["text"][:30], t[:30]))
+            pending = rest
+        out.sort(key=lambda x: x["start"])
         return out
 
     main_segs = [{"start": float(s.start), "end": float(s.end), "text": (s.text or "").strip(), "seg": s} for s in kept]
-    main_segs = confirmed(main_segs, fill_model, "main")
+    main_segs = confirmed(main_segs, [fill_model, model], "main")  # kotoba first, then large-v3 itself on the span alone
     log("main pass: %d of %d segment(s) confirmed" % (len(main_segs), len(kept)))
     progress(56)
     words, spans = [], []
@@ -600,7 +608,7 @@ def main():
             for cs, ce in clips_for(audio[int(hs * SR):int(he * SR)]):
                 fill_clips.append([hs + cs, hs + ce])
         log("fill pass: %s on %d span(s), %.0fs" % (a.fill_model, len(holes), sum(e - s for s, e in holes)))
-        fill_words = fill_pass(fill_model, audio, fill_clips, a.lang, device, total, lambda segs: confirmed(segs, model, "fill"))
+        fill_words = fill_pass(fill_model, audio, fill_clips, a.lang, device, total, lambda segs: confirmed(segs, [model], "fill"))
         for w in fill_words:
             words.append(w)
         spans += [(w["start"], w["end"]) for w in fill_words]

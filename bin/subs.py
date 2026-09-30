@@ -29,9 +29,12 @@ def _ts(t, sep):
 
 
 def write_srt(path, segs):
+    """Cues with "pos": "top" get the {\\an8} override most players (PotPlayer, VLC, mpv) honour in SRT, so on-screen
+    captions sit at the top and never stack with the dialogue at the bottom."""
     with open(path, "w", encoding="utf-8") as f:
         for i, s in enumerate(segs, 1):
-            f.write("%d\n%s --> %s\n%s\n\n" % (i, _ts(s["start"], ","), _ts(s["end"], ","), s["text"].strip()))
+            text = ("{\\an8}" if s.get("pos") == "top" else "") + s["text"].strip()
+            f.write("%d\n%s --> %s\n%s\n\n" % (i, _ts(s["start"], ","), _ts(s["end"], ","), text))
 
 
 def write_vtt(path, segs):
@@ -46,9 +49,11 @@ def write_vtt(path, segs):
 _NO_THINK = {}  # model -> False when the model rejects the "think" option
 
 
-def ollama_chat(url, model, messages, images=None, keep_alive="10m", timeout=1800, num_ctx=None, think=False, temperature=0.2):
+def ollama_chat(url, model, messages, images=None, keep_alive="10m", timeout=1800, num_ctx=None, think=False, temperature=0.2,
+                num_predict=None):
     """One /api/chat round trip. images: list of base64 strings attached to the last user message.
-    think=False switches reasoning off for thinking models (Qwen3.5/3.6); instruct models ignore or reject it."""
+    think=False switches reasoning off for thinking models (Qwen3.5/3.6); instruct models ignore or reject it.
+    num_predict caps the answer: a batch that starts looping otherwise runs to the context limit (minutes per call)."""
     msgs = [dict(m) for m in messages]
     if images:
         msgs[-1]["images"] = images
@@ -56,6 +61,8 @@ def ollama_chat(url, model, messages, images=None, keep_alive="10m", timeout=180
             "options": {"temperature": temperature}}
     if num_ctx:
         body["options"]["num_ctx"] = num_ctx
+    if num_predict:
+        body["options"]["num_predict"] = num_predict
     if _NO_THINK.get(model, True) and think is not None:
         body["think"] = think
     req = urllib.request.Request(url.rstrip("/") + "/api/chat", data=json.dumps(body).encode("utf-8"),
@@ -67,7 +74,7 @@ def ollama_chat(url, model, messages, images=None, keep_alive="10m", timeout=180
         msg = e.read().decode("utf-8", "replace")
         if e.code == 400 and "think" in msg and "think" in body:
             _NO_THINK[model] = False
-            return ollama_chat(url, model, messages, images, keep_alive, timeout, num_ctx, None, temperature)
+            return ollama_chat(url, model, messages, images, keep_alive, timeout, num_ctx, None, temperature, num_predict)
         raise urllib.error.HTTPError(e.url, e.code, msg[:300], e.headers, None)
     return data["message"]["content"]
 

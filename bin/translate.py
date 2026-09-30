@@ -65,7 +65,7 @@ SYSTEM = (
 PROOF = (
     "The lines below are automatic speech recognition output ({lang}) from one video, in order, each with its "
     "speaker tag. Recognition errors are common: near-homophones (奈々様 or アンナさん heard for 旦那様/旦那さん, "
-    "母 for もう/まあ, 寝て for なって), a word cut off at the end of a line, and gibberish syllables invented on "
+    "母 for もう/まあ, 寝て for なって, あざなち for 朝立ち), a word cut off at the end of a line, and gibberish syllables invented on "
     "moaning, breathing or music. Proofread the lines using the context of the whole batch. Rules: change a line "
     "only when you are confident it was misheard, and then only the misheard word(s); keep everything else exactly "
     "as written (same wording, punctuation and speech level; no polishing, no added words); a line that is "
@@ -113,6 +113,13 @@ USER = (
 )
 
 
+# Whisper mishearings of the husband address this genre repeats all video long. Applied after the proofread when the
+# script itself says 旦那様/旦那さん (5+ times) and the misheard form is rare (5 or fewer: a real character named 奈々
+# or アンナ would be all over the script).
+CONFUSIONS = {"奈々様": "旦那様", "アナ様": "旦那様", "あんな様": "旦那様", "アンナ様": "旦那様", "奈々さん": "旦那さん", "アンナさん": "旦那さん",
+              "奈々": "旦那様", "アンナ": "旦那さん"}
+LATIN = re.compile(r"[A-Za-z]{3,}")
+
 # words the model tends to leave in the source script; a plain Korean rendering beats deleting them
 LEAKS = {"旦那様": "서방님", "旦那さん": "남편", "旦那": "남편", "ご主人様": "주인님", "ご主人": "남편", "お兄ちゃん": "오빠", "お姉ちゃん": "누나",
          "ママ": "엄마", "パパ": "아빠", "先生": "선생님", "社長": "사장님", "お母さん": "엄마", "お父さん": "아빠"}
@@ -127,7 +134,9 @@ def clean(ko):
 
 
 def bad(src, ko):
-    return not ko or ko == src or FOREIGN.search(ko) is not None
+    """Empty, untouched, still in the source script, or Latin letters that are not the source itself (a logo word
+    such as MOODYZ may stay; "prezent" for PRESENTS may not)."""
+    return not ko or ko == src or FOREIGN.search(ko) is not None or (LATIN.search(ko) is not None and ko.strip() != src.strip())
 
 
 def parse_numbered(reply, n):
@@ -164,6 +173,10 @@ def main():
             x = dict(x, text=" ".join(x["text"].split()))  # one line: the numbered protocol cannot carry newlines
             if len("".join(x["text"].split())) < 2 or x["end"] - x["start"] < 1.5:
                 continue  # seen in a single 1 fps frame: small/unstable text (listings, tickers), not a caption
+            if not re.search(r"[^\W\d_]", x["text"]):
+                continue  # digits and punctuation only: a rating badge or a counter, not a caption
+            if x.get("type") == "subtitle" and x.get("y", 80) < 65:
+                x["type"] = "caption"  # a burned-in dialogue subtitle sits at the bottom; higher up it is a title card
             key = "".join(x["text"].split())
             prev = next((m for m in reversed(screen[-8:]) if "".join(m["text"].split()) == key and x["start"] - m["end"] <= 4.0), None)
             if prev:
@@ -179,7 +192,7 @@ def main():
         log("%d ASR line(s) replaced by burned-in subtitles" % (before - len(segs)))
     for x in screen:  # translated together with the dialogue so the style guide applies
         segs.append({"start": x["start"], "end": max(x["end"], x["start"] + 1.5), "text": x["text"], "spk": "",
-                     "screen": x["type"]})
+                     "screen": x["type"], "y": x.get("y", 50)})
     segs.sort(key=lambda s: s["start"])
     sc = json.load(open(a.scenes, encoding="utf-8"))
     summary = sc.get("summary") or "(none)"
@@ -197,7 +210,7 @@ def main():
                     "These lines are all spoken by one voice in a video (%s):\n%s\n\nIs this voice a narrator, i.e. a "
                     "voice-over that describes or explains the story to the viewer (third person, no one answers it), "
                     "rather than a person talking with others in the scene? Answer with one word: yes or no." % (a.lang, sample)}],
-                    num_ctx=4096)
+                    num_ctx=a.num_ctx, num_predict=8)  # same num_ctx as every other call: a different one reloads the model
                 v["narration"] = strip_think(r).strip().lower().startswith("yes")
             except Exception as e:
                 log("narrator check failed for %s: %s" % (k, e))
@@ -212,6 +225,7 @@ def main():
     os.makedirs(a.out_dir, exist_ok=True)
 
     def chat(user, **kw):
+        kw.setdefault("num_predict", 2000)
         return strip_think(ollama_chat(a.ollama, a.model, [{"role": "system", "content": system},
                                                            {"role": "user", "content": user}], num_ctx=a.num_ctx, **kw))
 
@@ -238,7 +252,7 @@ def main():
         lines = "\n".join("%d. %s%s" % (k + 1, tag(s), s["text"]) for k, s in enumerate(chunk))
         try:
             r = ollama_chat(a.ollama, a.model, [{"role": "user", "content": PROOF.format(lang=a.lang, n=len(chunk), cast=cast, lines=lines)}],
-                            num_ctx=a.num_ctx)
+                            num_ctx=a.num_ctx, num_predict=60 * len(chunk))
             got = parse_numbered(r, len(chunk))
         except Exception as e:
             log("proofread %d failed: %s" % (i // PROOF_BATCH, e))
@@ -261,6 +275,17 @@ def main():
         with open(cache_path, "w", encoding="utf-8") as f:
             json.dump({"n": len(dialog), "lines": ["-" if s.get("drop") else s["text"] for s in dialog]}, f, ensure_ascii=False)
     segs = [s for s in segs if not s.get("drop")]
+    script_text = "".join(s["text"] for s in segs if not s.get("screen"))
+    if script_text.count("旦那様") + script_text.count("旦那さん") >= 5:
+        n = 0
+        for wrong, right in CONFUSIONS.items():
+            if 0 < script_text.count(wrong) <= 5:
+                for s in segs:
+                    if not s.get("screen") and wrong in s["text"]:
+                        s["text"] = s["text"].replace(wrong, right)
+                        n += 1
+        if n:
+            log("husband address: %d line(s) corrected (%s)" % (n, ", ".join(CONFUSIONS)))
 
     # 1. style guide from the whole script (first ~600 lines fit the context comfortably)
     step = max(1, len(segs) // 300)  # ~300 lines spread over the whole video (CPU-side prefill is the slow part)
@@ -278,7 +303,7 @@ def main():
 
     def one(s):
         r = chat("Style guide:\n%s\n\nTranslate this one %s line into a Korean subtitle. Reply with the Korean text only.\n\n%s%s"
-                 % (bible, a.lang, tag(s), s["text"]))
+                 % (bible, a.lang, tag(s), s["text"]), num_predict=120)
         return re.sub(r"^[\"'「」\s]+|[\"'「」\s]+$", "", r.splitlines()[0] if r.strip() else "")
 
     out, prev = [], []
@@ -327,6 +352,7 @@ def main():
             cue = {"start": s["start"], "end": s["end"], "text": t, "spk": s.get("spk", "")}
             if s.get("screen") == "caption":
                 cue["pos"] = "top"
+                cue["y"] = s.get("y", 50)
             out.append(cue)
         prev = ["%s%s" % (tag(s), t) for s, t in zip(batch, ko)]
         progress(5 + (50 if not a.no_polish else 95) * hi / len(segs))
@@ -365,6 +391,7 @@ def main():
     if noise:
         log("%d noise line(s) dropped by the translator" % noise)
     out = [c for c in out if c["text"] != "-"]
+    out = composite_captions(out)
     write_srt(os.path.join(a.out_dir, "ko.srt"), out)
     write_vtt(os.path.join(a.out_dir, "ko.vtt"), out)
     sdh = build_sdh(out, sounds, castd)
@@ -375,6 +402,28 @@ def main():
 
 SOUND_KO = {"moan": "[신음]", "laugh": "[웃음]"}
 SPK_KO = {"F": "여", "M": "남"}
+
+
+def composite_captions(cues):
+    """Captions shown at the same time become one cue with one line per caption, top to bottom as on the picture.
+    A title that appears line by line therefore grows downward (line 1, then lines 1-2, then 1-3) instead of each
+    new line being stacked above the previous one by the player."""
+    caps = [c for c in cues if c.get("pos") == "top"]
+    if not caps:
+        return cues
+    rest = [c for c in cues if c.get("pos") != "top"]
+    edges = sorted({t for c in caps for t in (c["start"], c["end"])})
+    merged = []
+    for t0, t1 in zip(edges, edges[1:]):
+        active = [c for c in caps if c["start"] <= t0 and c["end"] >= t1]
+        if not active or t1 - t0 < 0.25:
+            continue
+        text = "\n".join(c["text"] for c in sorted(active, key=lambda c: (c.get("y", 50), c["start"])))
+        if merged and merged[-1]["text"] == text and abs(merged[-1]["end"] - t0) < 0.01:
+            merged[-1]["end"] = t1
+        else:
+            merged.append({"start": t0, "end": t1, "text": text, "spk": "", "pos": "top"})
+    return sorted(rest + merged, key=lambda c: (c["start"], c.get("pos") == "top"))
 
 
 def build_sdh(cues, sounds, cast=None):

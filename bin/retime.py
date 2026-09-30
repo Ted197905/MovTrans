@@ -90,7 +90,7 @@ def main():
         others = []
         for name in a.models.split(","):
             m = WhisperModel(name, device=device, compute_type="float16" if device == "cuda" else "int8")
-            others.append(decode_spans(m, audio, spans, lang, pad=0.5))  # aligned cues are tight: give the decoder some room
+            others.append(decode_spans(m, audio, spans, lang))
             del m
         kept = []
         for i, c in enumerate(cues):
