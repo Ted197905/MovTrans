@@ -74,9 +74,8 @@ PROOF = (
     "that sounds nearly the same (same syllables); when no similar-sounding word fits, leave the line as written; keep everything else exactly "
     "as written (same wording, punctuation and speech level; no polishing, no added words); a line that is "
     "meaningless syllables or clearly not speech becomes a single \"-\"; never merge, split, drop or reorder lines. "
-    "Answer only with the lines you change, one per line in the form \"<number>. <corrected line>\" (or "
-    "\"<number>. -\" for a noise line), same numbering, without the speaker tags; do not repeat unchanged lines; "
-    "if nothing needs a change, answer exactly OK.\n\nVoices:\n{cast}\n\nLines:\n{lines}"
+    "Answer with exactly {n} lines in the form \"<number>. <line>\", same numbering, without the speaker tags, "
+    "nothing else.\n\nVoices:\n{cast}\n\nLines:\n{lines}"
 )
 
 BIBLE_PROMPT = (
@@ -103,10 +102,9 @@ POLISH = (
     "draft so it reads like a subtitle a Korean native subtitler would deliver: fix mistranslations against the "
     "source, keep each speaker's fixed speech level and way of addressing others (style guide), make the wording "
     "natural spoken Korean for this situation and mood, keep it short (two lines of ~16 characters max). Keep a "
-    "good draft as it is. Korean only, no tags, no comments.\n\n"
+    "good draft as it is. One subtitle per line, same numbering, Korean only, no tags, no comments.\n\n"
     "Style guide:\n{bible}\n\nScene notes:\n{scenes}\n\nLines (source => draft):\n{pairs}\n\n"
-    "Answer only with the subtitles you change, one per line in the form \"<number>. <final Korean subtitle>\", "
-    "same numbering; do not repeat drafts you keep; if every draft is good, answer exactly OK."
+    "Answer with exactly {n} lines in the form \"<number>. <final Korean subtitle>\"."
 )
 
 USER = (
@@ -298,20 +296,20 @@ def main():
         lines = "\n".join("%d. %s%s" % (k + 1, tag(s), s["text"]) for k, s in enumerate(chunk))
         try:
             r = ollama_chat(a.ollama, a.model, [{"role": "user", "content": PROOF.format(lang=a.lang, n=len(chunk), cast=cast, lines=lines)}],
-                            num_ctx=a.num_ctx, num_predict=30 * len(chunk))
+                            num_ctx=a.num_ctx, num_predict=40 * len(chunk))
             got = parse_numbered(r, len(chunk))
         except Exception as e:
             log("proofread %d failed: %s" % (i // PROOF_BATCH, e))
             warn("인식 교정 배치 %d 실패: 이 구간은 교정 없이 번역" % (i // PROOF_BATCH))
             continue
         for k, s in enumerate(chunk):
-            t = got.get(k + 1, "").strip()
+            t = got.get(k + 1, "").replace("**", "").split("->")[-1].strip()  # some answers come as "old -> new"
             if t in ("-", "—", "ー"):
                 s["drop"] = True
                 dropped += 1
                 log("noise %.1f: %s" % (s["start"], s["text"][:40]))
             elif t and t != s["text"] and difflib.SequenceMatcher(None, t, s["text"]).ratio() >= 0.5:
-                if not sounds_alike(s["text"], t):
+                if not sounds_alike(s["text"], t) or ("旦那様" in s["text"]) != ("旦那様" in t):
                     log("fix refused %.1f: %s -> %s" % (s["start"], s["text"][:30], t[:30]))
                     continue
                 log("fix %.1f: %s -> %s" % (s["start"], s["text"][:30], t[:30]))
@@ -372,7 +370,7 @@ def main():
             if attempt:
                 time.sleep(5)  # an Ollama 500 usually means the runner crashed and is reloading
             try:
-                got = parse_numbered(chat(user), len(batch))
+                got = parse_numbered(chat(user, num_predict=40 * len(batch)), len(batch))  # a 25-line answer is ~400 tokens; a loop is cut early
                 if len(got) >= len(batch) - 2:
                     break
                 log("batch %d: got %d of %d lines" % (b, len(got), len(batch)))
@@ -416,7 +414,7 @@ def main():
             pairs = "\n".join("%d. %s%s => %s" % (k + 1, tag(s), s["text"], c["text"]) for k, (s, c) in enumerate(zip(src, chunk)))
             try:
                 got = parse_numbered(chat(POLISH.format(bible=bible, scenes="\n".join("- " + x for x in notes) or "(none)",
-                                                        pairs=pairs, n=len(chunk))), len(chunk))
+                                                        pairs=pairs, n=len(chunk)), num_predict=30 * len(chunk)), len(chunk))
             except Exception as e:
                 log("polish %d failed: %s" % (i // POLISH_BATCH, e))
                 warn("감수 배치 %d 실패: 초벌 번역 유지" % (i // POLISH_BATCH))

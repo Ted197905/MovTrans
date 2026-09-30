@@ -99,11 +99,11 @@ class Pipeline
                 }
 
                 $this->stage($jobId, 'translate');
-                $this->python($jobId, $echo, [
+                $this->python($jobId, $echo, array_merge([
                     ROOTPATH . 'bin/translate.py', '--segments', $dir . '/segments.json', '--scenes', $dir . '/scenes.json',
                     '--lang', $video['lang'], '--out-dir', $dir, '--ollama', $this->cfg->ollamaUrl, '--model', $this->cfg->textModel,
                     '--rating', $video['rating'] ?? 'rated', '--screen', $dir . '/screen.json',
-                ]);
+                ], $this->cfg->polish ? [] : ['--no-polish']));
             }
             $this->requireFile($dir . '/ko.vtt');
             foreach (glob($dir . '/*.{srt,vtt,json}', GLOB_BRACE) ?: [] as $f) Storage::relax($f);

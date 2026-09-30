@@ -18,6 +18,9 @@ class MovTrans extends BaseConfig
     /** auto = NVIDIA Sortformer (pyenv/nemo) if installed, else pyannote (token), else pitch; both = Sortformer + pyannote cross-check (logged). */
     public string $diarizer = 'auto';   // 'both' adds the pyannote cross-check (~5 min per 4 h, log only)
 
+    /** Second translation pass (감수) over the draft subtitles: ~25 min per 4 h video on a 3080, off = draft only. */
+    public bool $polish = true;
+
     /** Whisper model and compute type. */
     public string $whisperModel = 'large-v3';
     /** Second model for spans the first left empty (empty string disables). Japanese: kotoba-whisper. */
