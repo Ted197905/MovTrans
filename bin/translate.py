@@ -56,7 +56,9 @@ SYSTEM = (
     "other scripts. Japanese personal names are written by their Japanese reading, never by the Korean reading "
     "of the characters. Never transliterate other words by sound: interjections and slang (やばい, イク, すごい, "
     "気持ちいい...) are rendered by what they mean in that situation (やばい said in arousal or at climax is "
-    "미치겠어/안 돼/너무 좋아, never 위험해; 出して at climax is 싸 줘). The source lines are speech recognition "
+    "미치겠어/안 돼/너무 좋아, never 위험해; 出して at climax is 싸 줘; 行く/イク at climax is 가다 (行きそう = 갈 것 같아); "
+    "朝立ち is 아침텐트; 旦那様 said to or about one's husband is 서방님). On-screen text ([TXT]): a personal name in "
+    "a credit or title stays exactly as written in the original characters. The source lines are speech recognition "
     "output and can still contain mishearings (a near-homophone, a word cut at the line end): translate what the "
     "speaker evidently meant in context. A line that is only meaningless syllables (recognition noise, not "
     "speech) is answered with a single \"-\" so it can be dropped. Never add notes, explanations, speaker tags or "
@@ -120,7 +122,22 @@ USER = (
 # or アンナ would be all over the script).
 CONFUSIONS = {"奈々様": "旦那様", "アナ様": "旦那様", "あんな様": "旦那様", "アンナ様": "旦那様", "奈々さん": "旦那さん", "アンナさん": "旦那さん",
               "ナナ様": "旦那様", "奈々": "旦那様", "アンナ": "旦那さん"}
+MISHEARD = {"あざなち": "朝立ち", "あさなち": "朝立ち"}  # non-words Whisper writes for a real one
 LATIN = re.compile(r"[A-Za-z]{3,}")
+KEEP_AS_IS = re.compile(r"[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]")  # a caption without any of these is a logo/code
+KO_FIX = {"야위이": "미치겠어", "야바이": "미치겠어"}  # ヤバい transliterated despite the instructions
+
+
+def fix_ko(src, ko, screen, lang):
+    """Deterministic corrections after each model pass: 旦那様 stays 서방님, a logo/code caption stays as written,
+    and a transliterated ヤバい becomes its meaning."""
+    if screen == "caption" and lang in ("ja", "zh", "ko") and not KEEP_AS_IS.search(src):
+        return src
+    if "旦那様" in src and "서방님" not in ko:
+        ko = ko.replace("남편", "서방님")
+    for k, v in KO_FIX.items():
+        ko = ko.replace(k, v)
+    return ko
 
 # words the model tends to leave in the source script; a plain Korean rendering beats deleting them
 LEAKS = {"旦那様": "서방님", "旦那さん": "남편", "旦那": "남편", "ご主人様": "주인님", "ご主人": "남편", "お兄ちゃん": "오빠", "お姉ちゃん": "누나",
@@ -257,6 +274,9 @@ def main():
     # The result is cached in proof.json so that a re-run of this stage alone skips the 25 min pass.
     fixed = dropped = 0
     dialog = [s for s in segs if not s.get("screen")]
+    for s in dialog:
+        for k, v in MISHEARD.items():
+            s["text"] = s["text"].replace(k, v)
     cache_path = os.path.join(a.out_dir, "proof.json")
     cache = {}
     if os.path.isfile(cache_path):
@@ -362,9 +382,7 @@ def main():
             if t.strip() in ("-", "—") and not s.get("screen"):
                 ko.append("-")
                 continue
-            t = clean(t)
-            if s.get("screen") == "caption" and a.lang in ("ja", "zh", "ko") and not re.search(r"[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]", s["text"]):
-                t = s["text"]  # a logo, a credit or a code (MOODYZ PRESENTS, MIRD284): kept as written
+            t = fix_ko(s["text"], clean(t), s.get("screen"), a.lang)
             if bad(s["text"], t):
                 redo += 1
                 try:
@@ -402,7 +420,7 @@ def main():
                 warn("감수 배치 %d 실패: 초벌 번역 유지" % (i // POLISH_BATCH))
                 continue
             for k, (s, c) in enumerate(zip(src, chunk)):
-                t = clean(got.get(k + 1, ""))
+                t = fix_ko(s["text"], clean(got.get(k + 1, "")), s.get("screen"), a.lang)
                 if c["text"] == "-":
                     continue
                 if t and not bad(s["text"], t) and len(t) <= 3 * max(8, len(c["text"])):
