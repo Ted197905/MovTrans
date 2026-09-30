@@ -14,9 +14,12 @@
                   환각 검증(`bin/verify.py`: VAD 가 발화를 못 들으면 다른 모델이 같은 구간에서 같은 말을 써야 유지),
                   큐마다 wav2vec2 강제 정렬로 시작/끝 보정 (`bin/timing.py`) -> `segments.json`(cast, sounds 포함), `orig.srt/vtt`
    - `scene`      `bin/scene.py` 큐마다 프레임 1장을 Qwen3-VL(Ollama)로 분석 + 영상 개요 -> `scenes.json`
-   - `screen`     `bin/ocr.py` 1fps EasyOCR 검출 -> Qwen3-VL 판독: 화면 속 자막/캡션만 -> `screen.json` (실패해도 잡은 계속)
-   - `translate`  `bin/translate.py` 인식 결과 교정(문맥으로 동음 오인식 수정, 노이즈 줄 삭제) -> 스타일 가이드(등장인물/말투) 생성
-                  -> 25줄 배치 번역(장면 노트, 앞뒤 문맥) -> 재번역
+   - `screen`     `bin/ocr.py` 1fps 프레임(프록시는 1초 키프레임만 디코딩) EasyOCR 검출 -> Qwen3-VL 판독: 화면 속 자막/캡션만,
+                  세로 위치 y 는 검출 박스에서 -> `screen.json` (실패해도 잡은 계속)
+   - `translate`  `bin/translate.py` 인식 결과 교정(문맥으로 동음 오인식 수정, 발음이 비슷할 때만 반영, 노이즈 줄 삭제)
+                  -> 스타일 가이드(등장인물/말투) 생성 -> 25줄 배치 번역(장면 노트, 앞뒤 문맥) -> 재번역
+                  -> 40줄 감수(`MovTrans.php $polish`, 4시간 영상에 약 25분) -> 고정 규칙(旦那様=서방님, 영문 로고 원문 유지, ヤバい 음차 제거)
+                  -> 타이핑 효과로 나뉜 화면 텍스트 합치기, 동시에 보이는 캡션은 위->아래 한 큐로
                   -> `ko.srt/vtt`, SDH 트랙 `ko.sdh.srt/vtt`(화자 표시, [신음]/[웃음]), `style.txt`
 3. 진행 페이지가 `/api/jobs/{id}` 를 폴링해 단계별 진행 바 표시, 완료되면 `<video>` + `<track>` 로 재생 (한국어 / SDH / 원어)
 
