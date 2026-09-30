@@ -45,12 +45,27 @@ PROMPT = (
 URLISH = re.compile(r"(https?://|www\.|\.(com|net|cc|tv|xyz|jp|kr|io)\b|地址|网址|@)", re.I)
 
 
-def ypos(item):
-    """Vertical position 0-100 the reader gave the text (captions shown together are stacked in this order)."""
-    try:
-        return max(0, min(100, int(float(item.get("y", 50)))))
-    except (TypeError, ValueError):
-        return 50
+def ypos(k, n, boxes, h):
+    """Vertical position 0-100 of the k-th of n texts the model read top to bottom: the k-th detected box's top edge
+    (the model's own y is unreliable), spread over the boxes when the counts differ."""
+    tops = sorted(b[2] for b in boxes)
+    if not tops:
+        return int(100 * k / max(1, n))
+    j = k if len(tops) == n else round(k * (len(tops) - 1) / max(1, n - 1))
+    return max(0, min(100, int(100 * tops[j] / h)))
+
+
+def keyframe_gap(video):
+    """Seconds between keyframes over the first 60 s (0 when unknown)."""
+    r = subprocess.run(["ffprobe", "-v", "error", "-skip_frame", "nokey", "-select_streams", "v:0", "-show_entries", "frame=pts_time",
+                        "-of", "csv=p=0", "-read_intervals", "%+60", video], capture_output=True, text=True)
+    pts = []
+    for x in r.stdout.split():
+        try:
+            pts.append(float(x))
+        except ValueError:
+            pass
+    return (pts[-1] - pts[0]) / (len(pts) - 1) if len(pts) > 1 else 0
 
 
 def probe_dims(video):
@@ -104,7 +119,11 @@ def main():
     shutil.rmtree(frames_dir, ignore_errors=True)
     os.makedirs(frames_dir)
     W, H = probe_dims(a.video)
-    subprocess.run(["ffmpeg", "-y", "-v", "error", "-i", a.video, "-vf", "fps=1,scale=640:-2", "-q:v", "5",
+    gap = keyframe_gap(a.video)
+    # our proxies carry a keyframe every second: decoding only those is several times faster than a full decode
+    skip = ["-skip_frame", "nokey"] if 0 < gap <= 1.2 else []
+    log("keyframe gap %.2fs%s" % (gap, ", keyframes only" if skip else ""))
+    subprocess.run(["ffmpeg", "-y", "-v", "error"] + skip + ["-i", a.video, "-vf", "fps=1,scale=640:-2", "-q:v", "5",
                     os.path.join(frames_dir, "%06d.jpg")], check=True)
     files = sorted(os.listdir(frames_dir))
     n = len(files)
@@ -194,7 +213,7 @@ def main():
                 break
         if again is not None:
             for it in again:
-                out.append({"start": float(iv["start"]), "end": float(iv["end"]), "type": it["type"], "y": ypos(it),
+                out.append({"start": float(iv["start"]), "end": float(iv["end"]), "type": it["type"], "y": it["y"],
                             "text": " ".join(it["text"].split()), "ko": (it.get("ko") or "").strip()})
             continue
         t = (iv["start"] + iv["end"]) / 2.0
@@ -210,13 +229,15 @@ def main():
         except Exception as e:
             log("read failed at %ds: %s" % (t, str(e)[:120]))
             items = []
-        kept = [it for it in items if isinstance(it, dict) and it.get("type") in ("subtitle", "caption") and (it.get("text") or "").strip()
-                and not URLISH.search(it["text"])]
+        items = [it for it in items if isinstance(it, dict) and (it.get("text") or "").strip()]
+        for k, it in enumerate(items):
+            it["y"] = ypos(k, len(items), iv["boxes"], h)
+        kept = [it for it in items if it.get("type") in ("subtitle", "caption") and not URLISH.search(it["text"])]
         if items and not kept:
             logo_boxes += [b for b in iv["boxes"] if not any(iou(b, lb) > 0.5 for lb in logo_boxes)]
         read.append((mb, iv.get("sig"), kept))
         for it in kept:
-            out.append({"start": float(iv["start"]), "end": float(iv["end"]), "type": it["type"], "y": ypos(it),
+            out.append({"start": float(iv["start"]), "end": float(iv["end"]), "type": it["type"], "y": it["y"],
                         "text": " ".join(it["text"].split()), "ko": (it.get("ko") or "").strip()})
             log("%s %d-%ds: %s -> %s" % (it["type"], iv["start"], iv["end"], it["text"][:40], (it.get("ko") or "")[:40]))
         progress(55 + 44 * (k + 1) / max(1, len(intervals)))

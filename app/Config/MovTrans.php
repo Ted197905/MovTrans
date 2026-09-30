@@ -16,7 +16,7 @@ class MovTrans extends BaseConfig
     /** Hugging Face token for pyannote speaker diarization (gated models; empty: Sortformer or pitch only). */
     public string $hfToken = '';
     /** auto = NVIDIA Sortformer (pyenv/nemo) if installed, else pyannote (token), else pitch; both = Sortformer + pyannote cross-check (logged). */
-    public string $diarizer = 'both';
+    public string $diarizer = 'auto';   // 'both' adds the pyannote cross-check (~5 min per 4 h, log only)
 
     /** Whisper model and compute type. */
     public string $whisperModel = 'large-v3';
