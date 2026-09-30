@@ -28,10 +28,30 @@ def vad_max(probs, start, end):
     return float(q.max()) if len(q) else 0.0
 
 
+_kakasi = None
+
+
+def reading(text):
+    """Japanese text as hiragana (pykakasi), so 本当だ and ほんとだ, 可愛い and かわいい compare as the same words."""
+    global _kakasi
+    if _kakasi is None:
+        try:
+            import pykakasi
+            _kakasi = pykakasi.kakasi()
+        except Exception:
+            _kakasi = False
+    if not _kakasi:
+        return text
+    try:
+        return "".join(x["hira"] for x in _kakasi.convert(text))
+    except Exception:
+        return text
+
+
 def similarity(a, b):
     """How much of line a the other decode b contains. b comes from a wider window, so it may carry the neighbouring
     words too: a is matched against every stretch of b of about its own length and the best one counts."""
-    a, b = PUNCT.sub("", a).lower(), PUNCT.sub("", b).lower()
+    a, b = reading(PUNCT.sub("", a)).lower(), reading(PUNCT.sub("", b)).lower()
     if not a or not b:
         return 0.0
     w = len(a) + 2
@@ -42,18 +62,19 @@ def similarity(a, b):
 
 def decode_spans(model, audio, spans, lang, pad=1.0):
     """The other model's text for each (start, end) span, decoded on its own (no 30 s window to invent a story in).
+    Each span is cut out of the audio and decoded separately: clip_timestamps would merge overlapping windows
+    (faster-whisper never seeks backwards), so with a pad the clips leaked into each other.
     The pad matters: on a clip of one or two seconds Whisper answers with stock phrases (a real "大好き" came back
     as "お疲れ様です"), with a second of context on each side it hears the line."""
-    if not spans:
-        return []
-    clips = [[max(0.0, s - pad), min(len(audio) / SR, e + pad)] for s, e in spans]
-    it, _ = model.transcribe(audio, language=lang, beam_size=5, temperature=[0.0, 0.3], word_timestamps=False,
-                             condition_on_previous_text=False, vad_filter=False, clip_timestamps=[x for c in clips for x in c])
-    texts, j = [""] * len(clips), 0
-    for s in it:
-        while j < len(clips) - 1 and s.start >= clips[j + 1][0] - 0.01:
-            j += 1
-        texts[j] += (s.text or "").strip()
+    texts = []
+    for s, e in spans:
+        lo, hi = max(0, int((s - pad) * SR)), min(len(audio), int((e + pad) * SR))
+        try:
+            it, _ = model.transcribe(audio[lo:hi], language=lang, beam_size=5, temperature=[0.0, 0.3], word_timestamps=False,
+                                     condition_on_previous_text=False, vad_filter=False)
+            texts.append("".join((x.text or "").strip() for x in it))
+        except Exception:
+            texts.append("")
     return texts
 
 
@@ -69,4 +90,8 @@ def keep(text, other, vad):
         return True
     if len(core) <= 2:
         return vad >= 0.3 and sim >= 0.3
-    return sim >= 0.5 or (sim >= 0.3 and vad >= 0.1)
+    if sim >= 0.5 or (sim >= 0.3 and vad >= 0.1):
+        return True
+    # nobody else heard the same words: a clearly voiced, ordinary-looking line still stays (four women talking at
+    # once defeat the re-decode); a katakana-only string is the typical gibberish written on a moan
+    return vad >= 0.5 and len(core) >= 3 and re.fullmatch(r"[ァ-ヶー・]+", core) is None
