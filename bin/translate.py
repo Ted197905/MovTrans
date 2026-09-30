@@ -117,7 +117,7 @@ USER = (
 # script itself says 旦那様/旦那さん (5+ times) and the misheard form is rare (5 or fewer: a real character named 奈々
 # or アンナ would be all over the script).
 CONFUSIONS = {"奈々様": "旦那様", "アナ様": "旦那様", "あんな様": "旦那様", "アンナ様": "旦那様", "奈々さん": "旦那さん", "アンナさん": "旦那さん",
-              "奈々": "旦那様", "アンナ": "旦那さん"}
+              "ナナ様": "旦那様", "奈々": "旦那様", "アンナ": "旦那さん"}
 LATIN = re.compile(r"[A-Za-z]{3,}")
 
 # words the model tends to leave in the source script; a plain Korean rendering beats deleting them
