@@ -171,18 +171,25 @@ def main():
             if not x.get("text"):
                 continue
             x = dict(x, text=" ".join(x["text"].split()))  # one line: the numbered protocol cannot carry newlines
-            if len("".join(x["text"].split())) < 2 or x["end"] - x["start"] < 1.5:
-                continue  # seen in a single 1 fps frame: small/unstable text (listings, tickers), not a caption
+            if len("".join(x["text"].split())) < 2:
+                continue
             if not re.search(r"[^\W\d_]", x["text"]):
                 continue  # digits and punctuation only: a rating badge or a counter, not a caption
             if x.get("type") == "subtitle" and x.get("y", 80) < 65:
                 x["type"] = "caption"  # a burned-in dialogue subtitle sits at the bottom; higher up it is a title card
             key = "".join(x["text"].split())
             prev = next((m for m in reversed(screen[-8:]) if "".join(m["text"].split()) == key and x["start"] - m["end"] <= 4.0), None)
+            if not prev:  # text typed out letter by letter (or wiped): one caption with the full text from the first frame
+                prev = next((m for m in reversed(screen[-8:]) if x["start"] - m["end"] <= 2.0 and len(key) >= 2 and len("".join(m["text"].split())) >= 2
+                             and (key.startswith("".join(m["text"].split())) or "".join(m["text"].split()).startswith(key))), None)
+                if prev and len(key) > len("".join(prev["text"].split())):
+                    prev.update(text=x["text"], type=x["type"], y=x.get("y", prev.get("y", 50)))
             if prev:
                 prev["end"] = max(prev["end"], x["end"])
             else:
                 screen.append(dict(x))
+        # seen in a single 1 fps frame and never continued: small/unstable text (listings, tickers), not a caption
+        screen = [m for m in screen if m["end"] - m["start"] >= 1.5]
         screen = drop_persistent_text(screen, max((s["end"] for s in segs), default=0))
     # a burned-in subtitle carries the line already: the ASR cue under it is dropped, the subtitle is translated instead
     subs_iv = [(x["start"], x["end"]) for x in screen if x["type"] == "subtitle"]
@@ -336,6 +343,8 @@ def main():
                 ko.append("-")
                 continue
             t = clean(t)
+            if s.get("screen") == "caption" and a.lang in ("ja", "zh", "ko") and not re.search(r"[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]", s["text"]):
+                t = s["text"]  # a logo, a credit or a code (MOODYZ PRESENTS, MIRD284): kept as written
             if bad(s["text"], t):
                 redo += 1
                 try:
