@@ -74,8 +74,9 @@ PROOF = (
     "that sounds nearly the same (same syllables); when no similar-sounding word fits, leave the line as written; keep everything else exactly "
     "as written (same wording, punctuation and speech level; no polishing, no added words); a line that is "
     "meaningless syllables or clearly not speech becomes a single \"-\"; never merge, split, drop or reorder lines. "
-    "Answer with exactly {n} lines in the form \"<number>. <line>\", same numbering, without the speaker tags, "
-    "nothing else.\n\nVoices:\n{cast}\n\nLines:\n{lines}"
+    "Answer only with the lines you change, one per line in the form \"<number>. <corrected line>\" (or "
+    "\"<number>. -\" for a noise line), same numbering, without the speaker tags; do not repeat unchanged lines; "
+    "if nothing needs a change, answer exactly OK.\n\nVoices:\n{cast}\n\nLines:\n{lines}"
 )
 
 BIBLE_PROMPT = (
@@ -102,9 +103,10 @@ POLISH = (
     "draft so it reads like a subtitle a Korean native subtitler would deliver: fix mistranslations against the "
     "source, keep each speaker's fixed speech level and way of addressing others (style guide), make the wording "
     "natural spoken Korean for this situation and mood, keep it short (two lines of ~16 characters max). Keep a "
-    "good draft as it is. One subtitle per line, same numbering, Korean only, no tags, no comments.\n\n"
+    "good draft as it is. Korean only, no tags, no comments.\n\n"
     "Style guide:\n{bible}\n\nScene notes:\n{scenes}\n\nLines (source => draft):\n{pairs}\n\n"
-    "Answer with exactly {n} lines in the form \"<number>. <final Korean subtitle>\"."
+    "Answer only with the subtitles you change, one per line in the form \"<number>. <final Korean subtitle>\", "
+    "same numbering; do not repeat drafts you keep; if every draft is good, answer exactly OK."
 )
 
 USER = (
@@ -296,7 +298,7 @@ def main():
         lines = "\n".join("%d. %s%s" % (k + 1, tag(s), s["text"]) for k, s in enumerate(chunk))
         try:
             r = ollama_chat(a.ollama, a.model, [{"role": "user", "content": PROOF.format(lang=a.lang, n=len(chunk), cast=cast, lines=lines)}],
-                            num_ctx=a.num_ctx, num_predict=60 * len(chunk))
+                            num_ctx=a.num_ctx, num_predict=30 * len(chunk))
             got = parse_numbered(r, len(chunk))
         except Exception as e:
             log("proofread %d failed: %s" % (i // PROOF_BATCH, e))
