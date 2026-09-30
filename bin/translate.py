@@ -21,6 +21,7 @@ import re
 import time
 
 from subs import drop_persistent_text, log, ollama_chat, ollama_unload, progress, strip_think, warn, write_srt, write_vtt
+from verify import reading
 
 BATCH = 25
 LOOKAHEAD = 3
@@ -67,7 +68,8 @@ PROOF = (
     "speaker tag. Recognition errors are common: near-homophones (奈々様 or アンナさん heard for 旦那様/旦那さん, "
     "母 for もう/まあ, 寝て for なって, あざなち for 朝立ち), a word cut off at the end of a line, and gibberish syllables invented on "
     "moaning, breathing or music. Proofread the lines using the context of the whole batch. Rules: change a line "
-    "only when you are confident it was misheard, and then only the misheard word(s); keep everything else exactly "
+    "only when you are confident it was misheard, and then only the misheard word(s), replacing them with a word "
+    "that sounds nearly the same (same syllables); when no similar-sounding word fits, leave the line as written; keep everything else exactly "
     "as written (same wording, punctuation and speech level; no polishing, no added words); a line that is "
     "meaningless syllables or clearly not speech becomes a single \"-\"; never merge, split, drop or reorder lines. "
     "Answer with exactly {n} lines in the form \"<number>. <line>\", same numbering, without the speaker tags, "
@@ -137,6 +139,21 @@ def bad(src, ko):
     """Empty, untouched, still in the source script, or Latin letters that are not the source itself (a logo word
     such as MOODYZ may stay; "prezent" for PRESENTS may not)."""
     return not ko or ko == src or FOREIGN.search(ko) is not None or (LATIN.search(ko) is not None and ko.strip() != src.strip())
+
+
+def sounds_alike(old, new):
+    """A proofread correction must sound like what was heard: every replaced piece longer than two characters keeps a
+    similar kana reading (the model otherwise swaps in a story-fitting word, e.g. an example from the prompt)."""
+    for op, i1, i2, j1, j2 in difflib.SequenceMatcher(None, old, new).get_opcodes():
+        a, b = old[i1:i2], new[j1:j2]
+        if op == "equal" or max(len(a), len(b)) <= 2:
+            continue
+        if op != "replace":
+            return len(a) + len(b) <= 4
+        a, b = old[max(0, i1 - 1):i2 + 1], new[max(0, j1 - 1):j2 + 1]  # one character of context: the reading of a kanji depends on it
+        if difflib.SequenceMatcher(None, reading(a), reading(b)).ratio() < 0.5:
+            return False
+    return True
 
 
 def parse_numbered(reply, n):
@@ -272,6 +289,9 @@ def main():
                 dropped += 1
                 log("noise %.1f: %s" % (s["start"], s["text"][:40]))
             elif t and t != s["text"] and difflib.SequenceMatcher(None, t, s["text"]).ratio() >= 0.5:
+                if not sounds_alike(s["text"], t):
+                    log("fix refused %.1f: %s -> %s" % (s["start"], s["text"][:30], t[:30]))
+                    continue
                 log("fix %.1f: %s -> %s" % (s["start"], s["text"][:30], t[:30]))
                 s["text"] = t
                 fixed += 1
